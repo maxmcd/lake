@@ -25,32 +25,38 @@ type orderedParser struct {
 	referencesToParse map[string]toParse
 	evalContext       *hcl.EvalContext
 	names             map[string]hcl.Range
+	generatedStores   []StoreOrTarget
 }
 
 func newOrderedParser() *orderedParser {
-	return &orderedParser{
+	op := &orderedParser{
 		referencesToParse: map[string]toParse{},
 		names:             map[string]hcl.Range{},
 		evalContext: &hcl.EvalContext{
-			Functions: map[string]function.Function{
-				"download_file": function.New(&function.Spec{
-					Description: `Downloads a file`,
-					Params: []function.Parameter{
-						{
-							Name:             "url",
-							Type:             cty.String,
-							AllowDynamicType: false,
-						},
-					},
-					Type: function.StaticReturnType(cty.String),
-					Impl: func(args []cty.Value, retType cty.Type) (ret cty.Value, err error) {
-						return args[0], nil
-					},
-				}),
-			},
+			Functions: map[string]function.Function{},
 			Variables: map[string]cty.Value{},
 		},
 	}
+	op.evalContext.Functions["download_file"] = function.New(&function.Spec{
+		Description: `Downloads a file`,
+		Params: []function.Parameter{
+			{
+				Name:             "url",
+				Type:             cty.String,
+				AllowDynamicType: false,
+			},
+		},
+		Type: function.StaticReturnType(cty.String),
+		Impl: func(args []cty.Value, retType cty.Type) (ret cty.Value, err error) {
+			sot := StoreOrTarget{Name: "download_file", Env: map[string]string{
+				"fetch_url": "true",
+				"url":       args[0].AsString(),
+			}}
+			op.generatedStores = append(op.generatedStores, sot)
+			return sot.ctyString(), nil
+		},
+	})
+	return op
 }
 
 func (op *orderedParser) reviewBlocks(content *hcl.BodyContent) error {
@@ -139,7 +145,7 @@ func (op *orderedParser) walkGraphAndParse(directory *Directory) error {
 				directory.Targets = append(directory.Targets, storeOrTarget)
 			}
 
-			op.evalContext.Variables[name] = cty.StringVal(fmt.Sprintf("{{ %s }}", storeOrTarget.hash()))
+			op.evalContext.Variables[name] = storeOrTarget.ctyString()
 		} else if parse.attr != nil {
 			var diags hcl.Diagnostics
 			op.evalContext.Variables[name], diags = parse.attr.Expr.Value(op.evalContext)
@@ -151,6 +157,10 @@ func (op *orderedParser) walkGraphAndParse(directory *Directory) error {
 	})
 	if errs != nil {
 		return errs[0]
+	}
+
+	for _, store := range op.generatedStores {
+		directory.Stores = append(directory.Stores, store)
 	}
 
 	for _, parse := range op.configsToParse {

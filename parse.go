@@ -27,10 +27,11 @@ type Config struct {
 }
 
 type StoreOrTarget struct {
-	Name   string   `hcl:"name,label"`
-	Inputs []string `hcl:"inputs"`
-	Script string   `hcl:"script"`
-	Shell  []string `hcl:"shell,optional"`
+	Name   string            `hcl:"name,label"`
+	Inputs []string          `hcl:"inputs"`
+	Script string            `hcl:"script"`
+	Shell  []string          `hcl:"shell,optional"`
+	Env    map[string]string `hcl:"env,optional"`
 }
 
 func (sot StoreOrTarget) hash() string {
@@ -39,6 +40,10 @@ func (sot StoreOrTarget) hash() string {
 		panic(err)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func (sot StoreOrTarget) ctyString() cty.Value {
+	return cty.StringVal(fmt.Sprintf("{{ %s }}", sot.hash()))
 }
 
 var (

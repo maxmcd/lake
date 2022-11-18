@@ -1,6 +1,4 @@
-
 **Lakefile**
-
 ```hcl
 busybox_tar = download_file("http://lake.com/busybox.tar.gz")
 
@@ -17,6 +15,9 @@ store "empty_store" {
 
 store "busybox_store" {
   inputs = [busybox_tar, "./script.sh"]
+  env = {
+    FOO = "bar"
+  }
   script = <<EOH
     #!${busybox_tar}/bin/busybox sh
     sh ./script.sh
@@ -37,44 +38,56 @@ target "busybox" {
   EOH
 }
 ```
-
-**Output**
-
 ```json
 {
   "Stores": [
     {
-      "Name": "busybox_store",
-      "Inputs": [
-        "http://lake.com/busybox.tar.gz",
-        "./script.sh"
-      ],
-      "Script": "    #!http://lake.com/busybox.tar.gz/bin/busybox sh\n    sh ./script.sh\n",
-      "Shell": null
+      "Name": "empty_store",
+      "Inputs": [],
+      "Script": "    sh ./script.sh\n",
+      "Shell": null,
+      "Env": null
     },
     {
       "Name": "busybox_store_alt",
       "Inputs": [
-        "http://lake.com/busybox.tar.gz",
+        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}",
         "./script.sh"
       ],
       "Script": "sh ./script.sh",
       "Shell": [
-        "http://lake.com/busybox.tar.gz/bin/busybox",
+        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox",
         "sh"
-      ]
+      ],
+      "Env": null
     },
     {
-      "Name": "empty_store",
-      "Inputs": [],
-      "Script": "    sh ./script.sh\n",
-      "Shell": null
+      "Name": "busybox_store",
+      "Inputs": [
+        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}",
+        "./script.sh"
+      ],
+      "Script": "    #!{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox sh\n    sh ./script.sh\n",
+      "Shell": null,
+      "Env": {
+        "FOO": "bar"
+      }
+    },
+    {
+      "Name": "download_file",
+      "Inputs": null,
+      "Script": "",
+      "Shell": null,
+      "Env": {
+        "fetch_url": "true",
+        "url": "http://lake.com/busybox.tar.gz"
+      }
     }
   ],
   "Configs": [
     {
       "Shell": [
-        "http://lake.com/busybox.tar.gz/bin/busybox",
+        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox",
         "sh"
       ],
       "Temporary": ""
@@ -84,10 +97,11 @@ target "busybox" {
     {
       "Name": "busybox",
       "Inputs": [
-        "{{ 5a8139b2fa495f0b6a457d979e691436d651a281af5086289b45da2797308ca1 }}"
+        "{{ c316b8a95a73c807b4b269f84e6aa47964d8c2dae9d4bd07a68e96301e7cd7ea }}"
       ],
-      "Script": "    #!{{ 5a8139b2fa495f0b6a457d979e691436d651a281af5086289b45da2797308ca1 }}/bin/busybox sh\n    $busybox_store $@\n",
-      "Shell": null
+      "Script": "    #!{{ c316b8a95a73c807b4b269f84e6aa47964d8c2dae9d4bd07a68e96301e7cd7ea }}/bin/busybox sh\n    $busybox_store $@\n",
+      "Shell": null,
+      "Env": null
     }
   ]
 }

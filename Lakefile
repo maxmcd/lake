@@ -13,6 +13,9 @@ store "empty_store" {
 
 store "busybox_store" {
   inputs = [busybox_tar, "./script.sh"]
+  env = {
+    FOO = "bar"
+  }
   script = <<EOH
     #!${busybox_tar}/bin/busybox sh
     sh ./script.sh
