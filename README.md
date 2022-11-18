@@ -44,9 +44,12 @@ target "busybox" {
 {
   "Stores": [
     {
-      "Name": "empty_store",
-      "Inputs": [],
-      "Script": "    sh ./script.sh\n",
+      "Name": "busybox_store",
+      "Inputs": [
+        "http://lake.com/busybox.tar.gz",
+        "./script.sh"
+      ],
+      "Script": "    #!http://lake.com/busybox.tar.gz/bin/busybox sh\n    sh ./script.sh\n",
       "Shell": null
     },
     {
@@ -62,12 +65,9 @@ target "busybox" {
       ]
     },
     {
-      "Name": "busybox_store",
-      "Inputs": [
-        "http://lake.com/busybox.tar.gz",
-        "./script.sh"
-      ],
-      "Script": "    #!http://lake.com/busybox.tar.gz/bin/busybox sh\n    sh ./script.sh\n",
+      "Name": "empty_store",
+      "Inputs": [],
+      "Script": "    sh ./script.sh\n",
       "Shell": null
     }
   ],
@@ -84,12 +84,11 @@ target "busybox" {
     {
       "Name": "busybox",
       "Inputs": [
-        "{{ busybox_store }}"
+        "{{ 5a8139b2fa495f0b6a457d979e691436d651a281af5086289b45da2797308ca1 }}"
       ],
-      "Script": "    #!{{ busybox_store }}/bin/busybox sh\n    $busybox_store $@\n",
+      "Script": "    #!{{ 5a8139b2fa495f0b6a457d979e691436d651a281af5086289b45da2797308ca1 }}/bin/busybox sh\n    $busybox_store $@\n",
       "Shell": null
     }
-  ],
-  "Remain": null
+  ]
 }
 ```
