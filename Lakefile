@@ -1,30 +1,34 @@
-
 busybox_tar = download_file("http://lake.com/busybox.tar.gz")
 
-foo = "${busybox_tar} is the business"
 config {
-    shell = ["${busybox_tar}/bin/busybox", "sh"]
-    temporary = foo
+  shell = ["${busybox_tar}/bin/busybox", "sh"]
+}
+
+store "empty_store" {
+  inputs = []
+  script = <<EOH
+    sh ./script.sh
+  EOH
 }
 
 store "busybox_store" {
-    inputs = [busybox_tar, "./script.sh"]
-    script = <<EOH
+  inputs = [busybox_tar, "./script.sh"]
+  script = <<EOH
     #!${busybox_tar}/bin/busybox sh
     sh ./script.sh
-    EOH
+  EOH
 }
 
 store "busybox_store_alt" {
-    inputs = [busybox_tar, "./script.sh"]
-    shell = ["${busybox_tar}/bin/busybox", "sh"]
-    script = "sh ./script.sh"
+  inputs = [busybox_tar, "./script.sh"]
+  shell  = ["${busybox_tar}/bin/busybox", "sh"]
+  script = "sh ./script.sh"
 }
 
 target "busybox" {
-    inputs = [busybox_store]
-    script = <<EOH
+  inputs = [busybox_store]
+  script = <<EOH
     #!${busybox_store}/bin/busybox sh
     $busybox_store $@
-    EOH
+  EOH
 }
