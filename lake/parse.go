@@ -1,11 +1,15 @@
-package main
+package lake
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -39,7 +43,17 @@ func (sot StoreOrTarget) hash() string {
 	if err := json.NewEncoder(h).Encode(sot); err != nil {
 		panic(err)
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return bytesToBase32Hash(h.Sum(nil))
+}
+
+// bytesToBase32Hash copies nix here
+// https://nixos.org/nixos/nix-pills/nix-store-paths.html
+// Finally the comments tell us to compute the base32 representation of the
+// first 160 bits (truncation) of a sha256 of the above string:
+func bytesToBase32Hash(b []byte) string {
+	var buf bytes.Buffer
+	_, _ = base32.NewEncoder(base32.StdEncoding, &buf).Write(b[:20])
+	return strings.ToLower(buf.String())
 }
 
 func (sot StoreOrTarget) ctyString() cty.Value {
@@ -85,6 +99,11 @@ func parseHCL(src []byte, filename string) (content *hcl.BodyContent, attrBody h
 
 	schema, _ := gohcl.ImpliedBodySchema(Directory{})
 	content, attrBody, diags = hclFile.Body.PartialContent(schema)
+	for _, block := range attrBody.(*hclsyntax.Body).Blocks {
+		if _, found := blockSpecMap[block.Type]; !found {
+			return nil, nil, errors.Errorf("%s: Found unexpected block type %q", block.DefRange(), block.Type)
+		}
+	}
 	if diags.HasErrors() {
 		return nil, nil, diags
 	}
@@ -92,33 +111,45 @@ func parseHCL(src []byte, filename string) (content *hcl.BodyContent, attrBody h
 	return content, attrBody, nil
 }
 
-func parseBody(content *hcl.BodyContent, attrBody hcl.Body) (directory Directory, err error) {
+func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Directory, err error) {
 	dirParser := newOrderedParser()
-
 	if err := dirParser.reviewBlocks(content); err != nil {
-		return Directory{}, nil
-	}
-	if err := dirParser.reviewAttributes(attrBody); err != nil {
-		return Directory{}, nil
-	}
-
-	if err := dirParser.walkGraphAndParse(&directory); err != nil {
 		return Directory{}, err
 	}
-	return directory, nil
 
+	if err := dirParser.reviewAttributes(attrBody); err != nil {
+		return Directory{}, err
+	}
+
+	return dirParser.walkGraphAndAssembleDirectory()
 }
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
 func ParseDirectory(path string) (Directory, error) {
-	lakepath := filepath.Join(path, "Lakefile")
-	// TODO: support multiple files
-
-	content, attrBody, err := parseHCLFile(lakepath)
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		return Directory{}, err
+		return Directory{}, errors.Wrapf(err, "error attempting to read directory %q", path)
+	}
+	var files []string
+	for _, entry := range entries {
+		// Lakefile or *.Lakefile
+		if entry.Name() == LakeFilename ||
+			filepath.Ext(entry.Name()) == "."+LakeFilename {
+			files = append(files, filepath.Join(path, entry.Name()))
+		}
 	}
 
-	return parseBody(content, attrBody)
+	var contents []*hcl.BodyContent
+	var attrBodies []hcl.Body
+	for _, file := range files {
+		content, attrBody, err := parseHCLFile(file)
+		if err != nil {
+			return Directory{}, errors.Wrapf(err, "error parsing hcl file for %q", file)
+		}
+		contents = append(contents, content)
+		attrBodies = append(attrBodies, attrBody)
+	}
+
+	return parseBody(contents, attrBodies)
 }

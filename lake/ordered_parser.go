@@ -1,4 +1,4 @@
-package main
+package lake
 
 import (
 	"fmt"
@@ -59,70 +59,75 @@ func newOrderedParser() *orderedParser {
 	return op
 }
 
-func (op *orderedParser) reviewBlocks(content *hcl.BodyContent) error {
-	for _, block := range content.Blocks {
-		spec, found := blockSpecMap[block.Type]
-		if !found {
-			return errors.Errorf("Unexpected block type %q found", block.Type)
-		}
-		if block.Type == ConfigBlockTypeName {
-			op.configsToParse = append(op.configsToParse, toParse{
-				block: block,
-			})
-			continue
-		}
-		// Is "store" or "target"
-		name := block.Labels[0]
-		conflictRange, found := op.names[block.Labels[0]]
-		if found {
-			return fmt.Errorf(
-				"%s: Duplicate name; The name %q has already been used at %s. Target and store names must be unique.",
-				block.DefRange, name, conflictRange)
-		}
-		op.names[block.Labels[0]] = block.DefRange
-		op.graph.Add(name)
+func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) error {
+	for _, content := range contents {
+		for _, block := range content.Blocks {
+			spec, found := blockSpecMap[block.Type]
+			if !found {
+				return errors.Errorf("Unexpected block type %q found", block.Type)
+			}
+			if block.Type == ConfigBlockTypeName {
+				op.configsToParse = append(op.configsToParse, toParse{
+					block: block,
+				})
+				continue
+			}
+			// Is "store" or "target"
+			name := block.Labels[0]
+			conflictRange, found := op.names[block.Labels[0]]
+			if found {
+				return fmt.Errorf(
+					"%s: Duplicate name; The name %q has already been used at %s. Target and store names must be unique.",
+					block.DefRange, name, conflictRange)
+			}
+			op.names[block.Labels[0]] = block.DefRange
+			op.graph.Add(name)
 
-		op.referencesToParse[name] = toParse{block: block}
+			op.referencesToParse[name] = toParse{block: block}
 
-		// TODO: validate correct attributes are present here, or catch later?
-		// Can this catch someone up if there are variables present in an
-		// unparsed attribute that we don't pick up here?
-		for _, variable := range hcldec.Variables(block.Body, spec) {
-			op.graph.Add(variable.RootName())
-			op.graph.Connect(dag.BasicEdge(name, variable.RootName()))
-		}
-	}
-	return nil
-}
-
-func (op *orderedParser) reviewAttributes(attrBody hcl.Body) error {
-	// TODO: Confused about why this is required, docs say identified blocks are
-	// removed by Body.PartialContent
-	attrBody.(*hclsyntax.Body).Blocks = nil
-
-	attributes, diags := attrBody.JustAttributes()
-	if diags.HasErrors() {
-		return diags
-	}
-	for _, attr := range attributes {
-		name := attr.Name
-		conflictRange, found := op.names[name]
-		if found {
-			return fmt.Errorf("%s: Duplicate name; The name %q has already been used at %s. Target and store names cannot conflict with attribute names", attr.Range, name, conflictRange)
-		}
-
-		op.graph.Add(name)
-		variables := attr.Expr.Variables()
-		op.referencesToParse[name] = toParse{attr: attr}
-		for _, variable := range variables {
-			op.graph.Add(variable.RootName())
-			op.graph.Connect(dag.BasicEdge(name, variable.RootName()))
+			// TODO: validate correct attributes are present here, or catch later?
+			// Can this catch someone up if there are variables present in an
+			// unparsed attribute that we don't pick up here?
+			for _, variable := range hcldec.Variables(block.Body, spec) {
+				op.graph.Add(variable.RootName())
+				op.graph.Connect(dag.BasicEdge(name, variable.RootName()))
+			}
 		}
 	}
 	return nil
 }
 
-func (op *orderedParser) walkGraphAndParse(directory *Directory) error {
+func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) error {
+	for _, attrBody := range attrBodies {
+		// TODO: Confused about why this is required, docs say identified blocks are
+		// removed by Body.PartialContent
+		attrBody.(*hclsyntax.Body).Blocks = nil
+
+		attributes, diags := attrBody.JustAttributes()
+		if diags.HasErrors() {
+			return diags
+		}
+		for _, attr := range attributes {
+			name := attr.Name
+			conflictRange, found := op.names[name]
+			if found {
+				return fmt.Errorf("%s: Duplicate name; The name %q has already been used at %s. Target and store names cannot conflict with attribute names",
+					attr.Range, name, conflictRange)
+			}
+			op.names[name] = attr.Range
+			op.graph.Add(name)
+			variables := attr.Expr.Variables()
+			op.referencesToParse[name] = toParse{attr: attr}
+			for _, variable := range variables {
+				op.graph.Add(variable.RootName())
+				op.graph.Connect(dag.BasicEdge(name, variable.RootName()))
+			}
+		}
+	}
+	return nil
+}
+
+func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, err error) {
 	var lock sync.Mutex
 	errs := op.graph.Walk(func(v dag.Vertex) error {
 		// Force serial for now
@@ -156,7 +161,8 @@ func (op *orderedParser) walkGraphAndParse(directory *Directory) error {
 		return nil
 	})
 	if errs != nil {
-		return errs[0]
+		// TODO: improve err reporting
+		return Directory{}, errs[0]
 	}
 
 	for _, store := range op.generatedStores {
@@ -167,10 +173,10 @@ func (op *orderedParser) walkGraphAndParse(directory *Directory) error {
 		var config Config
 		// TODO: support other things; also this pattern is meh
 		if err := gohcl.DecodeBody(parse.block.Body, op.evalContext, &config); err != nil {
-			return err
+			return Directory{}, err
 		}
 		directory.Configs = append(directory.Configs, config)
 	}
 
-	return nil
+	return directory, nil
 }

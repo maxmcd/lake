@@ -13,7 +13,9 @@ store "empty_store" {
   EOH
 }
 
+# Or are these docs
 store "busybox_store" {
+  # These are docs
   inputs = [busybox_tar, "./script.sh"]
   env = {
     FOO = "bar"
@@ -38,6 +40,9 @@ target "busybox" {
   EOH
 }
 ```
+
+**Json Output:**
+
 ```json
 {
   "Stores": [
@@ -49,29 +54,29 @@ target "busybox" {
       "Env": null
     },
     {
-      "Name": "busybox_store_alt",
-      "Inputs": [
-        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}",
-        "./script.sh"
-      ],
-      "Script": "sh ./script.sh",
-      "Shell": [
-        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox",
-        "sh"
-      ],
-      "Env": null
-    },
-    {
       "Name": "busybox_store",
       "Inputs": [
-        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}",
+        "{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}",
         "./script.sh"
       ],
-      "Script": "    #!{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox sh\n    sh ./script.sh\n",
+      "Script": "    #!{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}/bin/busybox sh\n    sh ./script.sh\n",
       "Shell": null,
       "Env": {
         "FOO": "bar"
       }
+    },
+    {
+      "Name": "busybox_store_alt",
+      "Inputs": [
+        "{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}",
+        "./script.sh"
+      ],
+      "Script": "sh ./script.sh",
+      "Shell": [
+        "{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}/bin/busybox",
+        "sh"
+      ],
+      "Env": null
     },
     {
       "Name": "download_file",
@@ -87,7 +92,7 @@ target "busybox" {
   "Configs": [
     {
       "Shell": [
-        "{{ 0704a8f2f52ceac487818c51755e87256acb4faf45b86d4fbda32064ddd3cc9d }}/bin/busybox",
+        "{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}/bin/busybox",
         "sh"
       ],
       "Temporary": ""
@@ -97,9 +102,9 @@ target "busybox" {
     {
       "Name": "busybox",
       "Inputs": [
-        "{{ c316b8a95a73c807b4b269f84e6aa47964d8c2dae9d4bd07a68e96301e7cd7ea }}"
+        "{{ esyeusxmgnhdyfo3pmb24k7nz6qepx6c }}"
       ],
-      "Script": "    #!{{ c316b8a95a73c807b4b269f84e6aa47964d8c2dae9d4bd07a68e96301e7cd7ea }}/bin/busybox sh\n    $busybox_store $@\n",
+      "Script": "    #!{{ esyeusxmgnhdyfo3pmb24k7nz6qepx6c }}/bin/busybox sh\n    $busybox_store $@\n",
       "Shell": null,
       "Env": null
     }

@@ -4,13 +4,6 @@ config {
   shell = ["${busybox_tar}/bin/busybox", "sh"]
 }
 
-store "empty_store" {
-  inputs = []
-  script = <<EOH
-    sh ./script.sh
-  EOH
-}
-
 store "busybox_store" {
   inputs = [busybox_tar, "./script.sh"]
   env = {
@@ -35,3 +28,4 @@ target "busybox" {
     $busybox_store $@
   EOH
 }
+
