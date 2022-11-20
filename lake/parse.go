@@ -20,8 +20,8 @@ import (
 )
 
 type Directory struct {
-	Stores  []StoreOrTarget `hcl:"store,block"`
 	Configs []Config        `hcl:"config,block"`
+	Stores  []StoreOrTarget `hcl:"store,block"`
 	Targets []StoreOrTarget `hcl:"target,block"`
 }
 
@@ -31,11 +31,11 @@ type Config struct {
 }
 
 type StoreOrTarget struct {
-	Name   string            `hcl:"name,label"`
+	Env    map[string]string `hcl:"env,optional"`
 	Inputs []string          `hcl:"inputs"`
+	Name   string            `hcl:"name,label"`
 	Script string            `hcl:"script"`
 	Shell  []string          `hcl:"shell,optional"`
-	Env    map[string]string `hcl:"env,optional"`
 }
 
 func (sot StoreOrTarget) hash() string {
@@ -72,7 +72,8 @@ var configSpec = &hcldec.TupleSpec{
 }
 
 var storeOrTargetSpec = &hcldec.TupleSpec{
-	&hcldec.AttrSpec{Name: "inputs", Type: cty.List(cty.String), Required: false},
+	&hcldec.AttrSpec{Name: "env", Type: cty.Map(cty.String), Required: false},
+	&hcldec.AttrSpec{Name: "inputs", Type: cty.List(cty.String), Required: true},
 	&hcldec.AttrSpec{Name: "script", Type: cty.String, Required: true},
 	&hcldec.AttrSpec{Name: "shell", Type: cty.List(cty.String), Required: false},
 }
@@ -96,9 +97,12 @@ func parseHCL(src []byte, filename string) (content *hcl.BodyContent, attrBody h
 	if diags.HasErrors() {
 		return nil, nil, diags
 	}
+	return parseHCLBody(hclFile.Body)
+}
 
+func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, err error) {
 	schema, _ := gohcl.ImpliedBodySchema(Directory{})
-	content, attrBody, diags = hclFile.Body.PartialContent(schema)
+	content, attrBody, diags := body.PartialContent(schema)
 	for _, block := range attrBody.(*hclsyntax.Body).Blocks {
 		if _, found := blockSpecMap[block.Type]; !found {
 			return nil, nil, errors.Errorf("%s: Found unexpected block type %q", block.DefRange(), block.Type)
