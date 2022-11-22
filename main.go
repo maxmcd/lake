@@ -8,9 +8,10 @@ import (
 )
 
 func main() {
-	directory, err := lake.ParseDirectory(".")
-	if err != nil {
-		panic(err)
+	directory, files, diags := lake.ParseDirectory(".")
+	if diags.HasErrors() {
+		lake.PrintDiagnostics(files, diags)
+		return
 	}
 
 	encoder := json.NewEncoder(os.Stdout)

@@ -29,3 +29,11 @@ target "busybox" {
   EOH
 }
 
+# Do self references should work?
+# Doesn't this loop infinitely?
+target "./*Lakefile" {
+  inputs = ["./*Lakefile"]
+  script = <<EOH
+  nomad fmt .
+  EOH
+}

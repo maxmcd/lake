@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/pkg/errors"
 	"github.com/zclconf/go-cty/cty"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type Directory struct {
@@ -84,45 +85,53 @@ var blockSpecMap = map[string]hcldec.Spec{
 	ConfigBlockTypeName: configSpec,
 }
 
-func parseHCLFile(path string) (content *hcl.BodyContent, attrBody hcl.Body, err error) {
+func parseHCLFile(path string) (file *hcl.File, content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
 	src, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error reading %q", path)
+		return nil, nil, nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  errors.Wrapf(err, "error reading %q", path).Error(),
+		})
 	}
+
 	return parseHCL(src, filepath.Base(path))
 }
 
-func parseHCL(src []byte, filename string) (content *hcl.BodyContent, attrBody hcl.Body, err error) {
+func parseHCL(src []byte, filename string) (file *hcl.File, content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
 	hclFile, diags := hclsyntax.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return nil, nil, diags
+		return hclFile, nil, nil, diags
 	}
-	return parseHCLBody(hclFile.Body)
+	content, attrBody, diags = parseHCLBody(hclFile.Body)
+	return hclFile, content, attrBody, diags
 }
 
-func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, err error) {
+func rangePointer(r hcl.Range) *hcl.Range { return &r }
+
+func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
 	schema, _ := gohcl.ImpliedBodySchema(Directory{})
-	content, attrBody, diags := body.PartialContent(schema)
+	content, attrBody, diags = body.PartialContent(schema)
 	for _, block := range attrBody.(*hclsyntax.Body).Blocks {
 		if _, found := blockSpecMap[block.Type]; !found {
-			return nil, nil, errors.Errorf("%s: Found unexpected block type %q", block.DefRange(), block.Type)
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("Found unexpected block type %q", block.Type),
+				Subject:  rangePointer(block.DefRange()),
+				Context:  rangePointer(block.Range()),
+			})
 		}
 	}
-	if diags.HasErrors() {
-		return nil, nil, diags
-	}
-
-	return content, attrBody, nil
+	return content, attrBody, diags
 }
 
-func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Directory, err error) {
+func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Directory, diags hcl.Diagnostics) {
 	dirParser := newOrderedParser()
-	if err := dirParser.reviewBlocks(content); err != nil {
-		return Directory{}, err
-	}
 
-	if err := dirParser.reviewAttributes(attrBody); err != nil {
-		return Directory{}, err
+	diags = append(diags, dirParser.reviewBlocks(content)...)
+	diags = append(diags, dirParser.reviewAttributes(attrBody)...)
+
+	if diags.HasErrors() {
+		return Directory{}, diags
 	}
 
 	return dirParser.walkGraphAndAssembleDirectory()
@@ -130,30 +139,57 @@ func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Direc
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
-func ParseDirectory(path string) (Directory, error) {
+func ParseDirectory(path string) (d Directory, files map[string]*hcl.File, diags hcl.Diagnostics) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return Directory{}, errors.Wrapf(err, "error attempting to read directory %q", path)
+		return Directory{}, nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  errors.Wrapf(err, "error attempting to read directory %q", path).Error(),
+		})
 	}
-	var files []string
+	var filepaths []string
 	for _, entry := range entries {
 		// Lakefile or *.Lakefile
 		if entry.Name() == LakeFilename ||
 			filepath.Ext(entry.Name()) == "."+LakeFilename {
-			files = append(files, filepath.Join(path, entry.Name()))
+			filepaths = append(filepaths, filepath.Join(path, entry.Name()))
 		}
 	}
 
+	files = map[string]*hcl.File{}
 	var contents []*hcl.BodyContent
 	var attrBodies []hcl.Body
-	for _, file := range files {
-		content, attrBody, err := parseHCLFile(file)
-		if err != nil {
-			return Directory{}, errors.Wrapf(err, "error parsing hcl file for %q", file)
+	for _, fp := range filepaths {
+		hclFile, content, attrBody, theseDiags := parseHCLFile(fp)
+		files[filepath.Base(fp)] = hclFile
+		if theseDiags.HasErrors() {
+			diags = diags.Extend(theseDiags)
+			continue
 		}
 		contents = append(contents, content)
 		attrBodies = append(attrBodies, attrBody)
 	}
+	if diags.HasErrors() {
+		return Directory{}, nil, diags
+	}
 
-	return parseBody(contents, attrBodies)
+	d, diags = parseBody(contents, attrBodies)
+	return d, files, diags
+}
+
+// PrintDiagnostics is an opinionated use of hcl.NewDiagnosticTextWriter that
+// fetches the terminal width, determines if the output should contain color and
+// prints to stderr
+func PrintDiagnostics(files map[string]*hcl.File, diags hcl.Diagnostics) error {
+	color := os.Getenv("NO_COLOR") == ""
+	width, _, err := terminal.GetSize(int(os.Stdin.Fd()))
+	if err != nil {
+		width = 80
+		color = false // assume we don't have a terminal
+	}
+	writer := hcl.NewDiagnosticTextWriter(os.Stderr, files, uint(width), color)
+	if err := writer.WriteDiagnostics(diags); err != nil {
+		return err
+	}
+	return nil
 }

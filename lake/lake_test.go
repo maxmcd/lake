@@ -1,6 +1,9 @@
 package lake
 
 import (
+	"bufio"
+	"bytes"
+	"fmt"
 	"io/ioutil"
 	"testing"
 
@@ -9,7 +12,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type testFile struct {
@@ -25,6 +27,32 @@ type testCaseFile struct {
 	Body hcl.Body `hcl:",remain"`
 }
 
+func hclRangeBytes(rng hcl.Range, file []byte) (out []byte) {
+	scanner := bufio.NewScanner(bytes.NewBuffer(file))
+	lineNo := 1
+
+	append := func(lineNo int, line []byte) {
+		switch {
+		case lineNo == rng.Start.Line:
+			out = append(out, line[rng.Start.Column-1:]...)
+		case lineNo > rng.Start.Line && lineNo < rng.End.Line:
+			out = append(out, line...)
+		case lineNo == rng.End.Line:
+			out = append(out, line[:rng.End.Column-1]...)
+		default:
+			return
+		}
+		out = append(out, '\n')
+	}
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		append(lineNo, line)
+		lineNo++
+	}
+	return out
+}
+
 func TestTestHCL(t *testing.T) {
 	src, err := ioutil.ReadFile("./test.hcl")
 	if err != nil {
@@ -35,45 +63,64 @@ func TestTestHCL(t *testing.T) {
 		t.Fatal(diags)
 	}
 	var tf testFile
-	if err := gohcl.DecodeBody(hclFile.Body, nil, &tf); err != nil {
-		t.Fatal(err)
+	if diags := gohcl.DecodeBody(hclFile.Body, nil, &tf); diags.HasErrors() {
+		t.Fatal(diags)
 	}
 
 	for _, test := range tf.Tests {
 		t.Run(test.Name, func(t *testing.T) {
-			err := func() error {
+			files := map[string]*hcl.File{}
+			diags := func() hcl.Diagnostics {
+				var diags hcl.Diagnostics
 				var contents []*hcl.BodyContent
 				var attrBodies []hcl.Body
 				for _, body := range test.Files {
-					// TODO: fix this so filename is accurate relative to the
-					// test case in err messages
-					content, attrBody, err := parseHCLBody(body.Body)
-					if err != nil {
-						return err
+					syntaxBody := body.Body.(*hclsyntax.Body)
+
+					// Move to within the braces around the closure bytes
+					rangeWithinBody := syntaxBody.SrcRange
+					rangeWithinBody.Start.Line++
+					rangeWithinBody.Start.Column = 1
+					rangeWithinBody.End.Column = 1
+
+					file, content, attrBody, theseDiags := parseHCL(hclRangeBytes(rangeWithinBody, src), body.Name)
+					files[body.Name] = file
+					if theseDiags.HasErrors() {
+						diags = diags.Extend(theseDiags)
 					}
 					contents = append(contents, content)
 					attrBodies = append(attrBodies, attrBody)
 				}
-				_, err := parseBody(contents, attrBodies)
-				return err
+				if diags.HasErrors() {
+					return diags
+				}
+				_, diags = parseBody(contents, attrBodies)
+				return diags
 			}()
 			if test.ErrContains != "" {
-				if err == nil {
+				if !diags.HasErrors() {
 					t.Fatalf("Expected error to contain %q but there was no err", test.ErrContains)
 				}
-				require.Contains(t, err.Error(), test.ErrContains)
+				if pass := assert.Contains(t, fmt.Sprint(diags.Errs()), test.ErrContains); !pass {
+					if err := PrintDiagnostics(files, diags); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
-			if test.ErrContains == "" && err != nil {
-				t.Fatal(err)
+			if test.ErrContains == "" && diags.HasErrors() {
+				if err := PrintDiagnostics(files, diags); err != nil {
+					t.Fatal(err)
+				}
+				t.Fatal(diags)
 			}
 		})
 	}
 }
 
 func TestProjectLakefile(t *testing.T) {
-	_, err := ParseDirectory("../")
-	if err != nil {
-		t.Fatal(err)
+	_, _, diags := ParseDirectory("../")
+	if diags.HasErrors() {
+		t.Fatal(diags)
 	}
 }
 

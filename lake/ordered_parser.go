@@ -28,6 +28,17 @@ type orderedParser struct {
 	generatedStores   []StoreOrTarget
 }
 
+func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hcl.Range) *hcl.Diagnostic {
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "Duplicate name",
+		Detail: fmt.Sprintf(
+			"The name %q has already been used at %s. Target, store, and attribute names must be unique.",
+			name, conflictRange),
+		Subject: subject,
+		Context: context,
+	}
+}
 func newOrderedParser() *orderedParser {
 	op := &orderedParser{
 		referencesToParse: map[string]toParse{},
@@ -59,12 +70,13 @@ func newOrderedParser() *orderedParser {
 	return op
 }
 
-func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) error {
+func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) (diags hcl.Diagnostics) {
 	for _, content := range contents {
 		for _, block := range content.Blocks {
 			spec, found := blockSpecMap[block.Type]
 			if !found {
-				return errors.Errorf("Unexpected block type %q found", block.Type)
+				// Blocks should be validated before reaching this function
+				panic(errors.Errorf("Unexpected block type %q found", block.Type))
 			}
 			if block.Type == ConfigBlockTypeName {
 				op.configsToParse = append(op.configsToParse, toParse{
@@ -76,9 +88,13 @@ func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) error {
 			name := block.Labels[0]
 			conflictRange, found := op.names[block.Labels[0]]
 			if found {
-				return fmt.Errorf(
-					"%s: Duplicate name; The name %q has already been used at %s. Target and store names must be unique.",
-					block.DefRange, name, conflictRange)
+				diags = append(diags, errDuplicateName(
+					name,
+					conflictRange,
+					rangePointer(block.DefRange),
+					rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+				)
+				continue
 			}
 			op.names[block.Labels[0]] = block.DefRange
 			op.graph.Add(name)
@@ -94,25 +110,32 @@ func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) error {
 			}
 		}
 	}
-	return nil
+	return diags
 }
 
-func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) error {
+func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) (diags hcl.Diagnostics) {
 	for _, attrBody := range attrBodies {
 		// TODO: Confused about why this is required, docs say identified blocks are
 		// removed by Body.PartialContent
 		attrBody.(*hclsyntax.Body).Blocks = nil
 
-		attributes, diags := attrBody.JustAttributes()
-		if diags.HasErrors() {
-			return diags
+		attributes, theseDiags := attrBody.JustAttributes()
+		if theseDiags.HasErrors() {
+			diags = append(diags, theseDiags...)
+			continue
 		}
 		for _, attr := range attributes {
 			name := attr.Name
 			conflictRange, found := op.names[name]
 			if found {
-				return fmt.Errorf("%s: Duplicate name; The name %q has already been used at %s. Target and store names cannot conflict with attribute names",
-					attr.Range, name, conflictRange)
+				diags = append(diags, errDuplicateName(
+					name,
+					conflictRange,
+					rangePointer(attr.Range),
+					nil,
+				))
+
+				continue
 			}
 			op.names[name] = attr.Range
 			op.graph.Add(name)
@@ -124,10 +147,10 @@ func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) error {
 			}
 		}
 	}
-	return nil
+	return diags
 }
 
-func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, err error) {
+func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, diags hcl.Diagnostics) {
 	var lock sync.Mutex
 	errs := op.graph.Walk(func(v dag.Vertex) error {
 		// Force serial for now
@@ -136,11 +159,12 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, e
 
 		name := v.(string)
 		parse := op.referencesToParse[name]
+
 		if parse.block != nil {
 			var storeOrTarget StoreOrTarget
 
-			if err := gohcl.DecodeBody(parse.block.Body, op.evalContext, &storeOrTarget); err != nil {
-				return err
+			if diags := gohcl.DecodeBody(parse.block.Body, op.evalContext, &storeOrTarget); diags.HasErrors() {
+				return diags
 			}
 
 			storeOrTarget.Name = parse.block.Labels[0]
@@ -153,16 +177,19 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, e
 			op.evalContext.Variables[name] = storeOrTarget.ctyString()
 		} else if parse.attr != nil {
 			var diags hcl.Diagnostics
-			op.evalContext.Variables[name], diags = parse.attr.Expr.Value(op.evalContext)
-			if diags.HasErrors() {
+			if op.evalContext.Variables[name], diags = parse.attr.Expr.Value(op.evalContext); diags.HasErrors() {
 				return diags
 			}
+			return nil
 		}
 		return nil
 	})
-	if errs != nil {
-		// TODO: improve err reporting
-		return Directory{}, errs[0]
+	for _, err := range errs {
+		diags = diags.Extend(err.(hcl.Diagnostics))
+	}
+
+	if diags.HasErrors() {
+		return Directory{}, diags
 	}
 
 	for _, store := range op.generatedStores {
@@ -171,12 +198,12 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, e
 
 	for _, parse := range op.configsToParse {
 		var config Config
-		// TODO: support other things; also this pattern is meh
 		if err := gohcl.DecodeBody(parse.block.Body, op.evalContext, &config); err != nil {
-			return Directory{}, err
+			return Directory{}, diags.Extend(err)
 		}
+		// TODO: merge configs
 		directory.Configs = append(directory.Configs, config)
 	}
 
-	return directory, nil
+	return directory, diags
 }
