@@ -2,6 +2,7 @@ package lake
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/hashicorp/hcl/v2"
@@ -150,7 +151,42 @@ func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) (diags hcl.Diag
 	return diags
 }
 
+func (op *orderedParser) checkGraphForCycles() (diags hcl.Diagnostics) {
+	// Report errors for cycles
+	for _, cycles := range op.graph.Cycles() {
+		stringCycles := []string{}
+		// TODO: The order this is reported in is random, can we pick a
+		// deterministic starting point
+		for _, id := range cycles {
+			stringCycles = append(stringCycles, id.(string))
+		}
+		first_identifier := cycles[0]
+		var subject *hcl.Range
+		var context *hcl.Range
+
+		parse := op.referencesToParse[first_identifier.(string)]
+		if parse.block != nil {
+			context = &parse.block.Body.(*hclsyntax.Body).SrcRange
+			subject = &parse.block.DefRange
+		} else if parse.attr != nil {
+			subject = &parse.attr.Range
+		}
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Circular reference",
+			Detail:   fmt.Sprintf("Identifiers %s create a circular reference.", strings.Join(stringCycles, " -> ")),
+			Subject:  subject,
+			Context:  context,
+		})
+	}
+	return diags
+}
+
 func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, diags hcl.Diagnostics) {
+	if diags := op.checkGraphForCycles(); diags.HasErrors() {
+		return Directory{}, diags
+	}
+
 	var lock sync.Mutex
 	errs := op.graph.Walk(func(v dag.Vertex) error {
 		// Force serial for now
@@ -164,6 +200,10 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, d
 			var storeOrTarget StoreOrTarget
 
 			if diags := gohcl.DecodeBody(parse.block.Body, op.evalContext, &storeOrTarget); diags.HasErrors() {
+				for _, diag := range diags {
+					// Add more context to error
+					diag.Context = &parse.block.Body.(*hclsyntax.Body).SrcRange
+				}
 				return diags
 			}
 

@@ -29,8 +29,10 @@ target "busybox" {
   EOH
 }
 
-# Do self references should work?
-# Doesn't this loop infinitely?
+
+# Do self references work? Doesn't this loop infinitely? How do wildcard matches
+# work with various identifier names? Like what if I have another target called
+# "./other.Lakefile"?
 target "./*Lakefile" {
   inputs = ["./*Lakefile"]
   script = <<EOH

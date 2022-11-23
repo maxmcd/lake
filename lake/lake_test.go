@@ -9,7 +9,6 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
-	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
 )
@@ -114,26 +113,5 @@ func TestTestHCL(t *testing.T) {
 				t.Fatal(diags)
 			}
 		})
-	}
-}
-
-func TestProjectLakefile(t *testing.T) {
-	_, _, diags := ParseDirectory("../")
-	if diags.HasErrors() {
-		t.Fatal(diags)
-	}
-}
-
-// TestConfirmSchemaMatch confirms that our struct schema mirrors our spec
-func TestConfirmSchemaMatch(t *testing.T) {
-	// TODO: figure out how to use a single source of truth so that maintaining
-	// these mappings isn't necessary
-	{
-		schema, _ := gohcl.ImpliedBodySchema(StoreOrTarget{})
-		assert.Equal(t, schema, hcldec.ImpliedSchema(storeOrTargetSpec))
-	}
-	{
-		schema, _ := gohcl.ImpliedBodySchema(Config{})
-		assert.Equal(t, schema, hcldec.ImpliedSchema(configSpec))
 	}
 }

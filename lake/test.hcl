@@ -75,3 +75,47 @@ test "conflicting config" {
     }
   }
 }
+
+
+test "store target circular reference" {
+  err_contains = "Circular reference"
+  file "Lakefile" {
+    target "a" {
+      inputs = [c]
+      script = ""
+    }
+    store "b" {
+      inputs = [a]
+      script = ""
+    }
+    target "c" {
+      inputs = [b]
+      script = ""
+    }
+  }
+}
+
+
+test "attribute circular reference" {
+  err_contains = "Circular reference"
+  file "Lakefile" {
+    a = "${c}"
+    b = "${a}"
+    c = "${b}"
+  }
+}
+
+test "mixed attribute store target circular reference" {
+  err_contains = "Circular reference"
+  file "Lakefile" {
+    a = "${c}"
+    target "b" {
+      inputs = [a]
+      script = ""
+    }
+    store "c" {
+      inputs = [b]
+      script = ""
+    }
+  }
+}
