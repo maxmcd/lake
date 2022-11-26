@@ -1,11 +1,24 @@
-busybox_tar = download_file("http://lake.com/busybox.tar.gz")
+// import "github.com/maxmcd/lake/lib" {}
+// https://github.com/google/starlark-go/blob/master/starlark/example_test.go
+
+store "busybox_tar" { 
+  env = {
+    fetch_url = "true"
+    url = "http://lake.com/busybox.tar.gz" 
+  }
+  network = true
+}
+
 
 config {
   shell = ["${busybox_tar}/bin/busybox", "sh"]
 }
 
 store "busybox_store" {
-  inputs = [busybox_tar, "./script.sh"]
+  inputs = [
+    busybox_tar, "./script.sh", 
+    // lib.lake_tar_gz,
+  ]
   env = {
     FOO = "bar"
   }
@@ -15,8 +28,11 @@ store "busybox_store" {
   EOH
 }
 
+
+build_script = "./script.sh"
+
 store "busybox_store_alt" {
-  inputs = [busybox_tar, "./script.sh"]
+  inputs = [busybox_tar, build_script]
   shell  = ["${busybox_tar}/bin/busybox", "sh"]
   script = "sh ./script.sh"
 }
@@ -28,6 +44,11 @@ target "busybox" {
     $busybox_store $@
   EOH
 }
+
+# Are tests a thing?
+# test "ensure it runs" {
+#
+# }
 
 
 # Do self references work? Doesn't this loop infinitely? How do wildcard matches

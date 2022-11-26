@@ -38,7 +38,13 @@ test "basic functionality" {
     config {
       shell = ["${busybox_tar}/bin/busybox", "sh"]
     }
-    busybox_tar = download_file("http://lake.com/busybox.tar.gz")
+    store "busybox_tar" { 
+      env = {
+        fetch_url = "true"
+        url = "http://lake.com/busybox.tar.gz" 
+      }
+      network = true
+    }
     target "busybox" {
       inputs = [busybox_store]
       script = <<EOH
@@ -64,6 +70,7 @@ test "basic functionality" {
 }
 
 test "conflicting config" {
+  err_contains = "Conflicting config value"
   file "Lakefile" {
     config {
       shell = ["/bin/busybox", "sh"]

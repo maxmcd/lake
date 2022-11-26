@@ -95,7 +95,6 @@ target "busybox" {
         "{{ a4ckr4xvftvmjb4brrixkxuhevvmwt5p }}/bin/busybox",
         "sh"
       ],
-      "Temporary": ""
     }
   ],
   "Targets": [

@@ -23,8 +23,8 @@ func TestConfirmSchemaMatch(t *testing.T) {
 	// TODO: figure out how to use a single source of truth so that maintaining
 	// these mappings isn't necessary
 	{
-		schema, _ := gohcl.ImpliedBodySchema(StoreOrTarget{})
-		assert.Equal(t, schema, hcldec.ImpliedSchema(storeOrTargetSpec))
+		schema, _ := gohcl.ImpliedBodySchema(Recipe{})
+		assert.Equal(t, schema, hcldec.ImpliedSchema(recipeSpec))
 	}
 	{
 		schema, _ := gohcl.ImpliedBodySchema(Config{})

@@ -20,28 +20,50 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-type Directory struct {
-	Configs []Config        `hcl:"config,block"`
-	Stores  []StoreOrTarget `hcl:"store,block"`
-	Targets []StoreOrTarget `hcl:"target,block"`
+type lakefile struct {
+	Configs []Config `hcl:"config,block"`
+	Stores  []Recipe `hcl:"store,block"`
+	Targets []Recipe `hcl:"target,block"`
+}
+
+type Value struct {
+	cty    *cty.Value
+	recipe *Recipe
+}
+
+func (v Value) isRecipe() bool { return v.recipe != nil }
+func (v Value) isCty() bool    { return v.cty != nil }
+
+func (v Value) MarshalJSON() ([]byte, error) {
+	if v.isCty() {
+		return json.Marshal(*v.cty)
+	}
+	return json.Marshal(*v.recipe)
+}
+
+type Import struct {
+	Name  string `hcl:"name,label"`
+	Alias string `hcl:"alias,optional"`
 }
 
 type Config struct {
-	Shell     []string `hcl:"shell,optional"`
-	Temporary string   `hcl:"temporary,optional"`
+	Shell []string `hcl:"shell,optional"`
 }
 
-type StoreOrTarget struct {
-	Env    map[string]string `hcl:"env,optional"`
-	Inputs []string          `hcl:"inputs"`
-	Name   string            `hcl:"name,label"`
-	Script string            `hcl:"script"`
-	Shell  []string          `hcl:"shell,optional"`
+type Recipe struct {
+	IsStore bool
+	Env     map[string]string `hcl:"env,optional" json:",omitempty"`
+	Inputs  []string          `hcl:"inputs,optional" json:",omitempty"`
+	Name    string            `hcl:"name,label"`
+	Script  string            `hcl:"script,optional" json:",omitempty"`
+	Network bool              `hcl:"network,optional" json:",omitempty"`
+	Shell   []string          `hcl:"shell,optional"`
 }
 
-func (sot StoreOrTarget) hash() string {
+func (recipe Recipe) hash() string {
 	h := sha256.New()
-	if err := json.NewEncoder(h).Encode(sot); err != nil {
+	if err := json.NewEncoder(h).Encode(recipe); err != nil {
+		// Shoudn't ever happen?
 		panic(err)
 	}
 	return bytesToBase32Hash(h.Sum(nil))
@@ -57,8 +79,8 @@ func bytesToBase32Hash(b []byte) string {
 	return strings.ToLower(buf.String())
 }
 
-func (sot StoreOrTarget) ctyString() cty.Value {
-	return cty.StringVal(fmt.Sprintf("{{ %s }}", sot.hash()))
+func (recipe Recipe) ctyString() cty.Value {
+	return cty.StringVal(fmt.Sprintf("{{ %s }}", recipe.hash()))
 }
 
 var (
@@ -69,19 +91,19 @@ var (
 
 var configSpec = &hcldec.TupleSpec{
 	&hcldec.AttrSpec{Name: "shell", Type: cty.List(cty.String), Required: false},
-	&hcldec.AttrSpec{Name: "temporary", Type: cty.String, Required: false},
 }
 
-var storeOrTargetSpec = &hcldec.TupleSpec{
+var recipeSpec = &hcldec.TupleSpec{
 	&hcldec.AttrSpec{Name: "env", Type: cty.Map(cty.String), Required: false},
-	&hcldec.AttrSpec{Name: "inputs", Type: cty.List(cty.String), Required: true},
-	&hcldec.AttrSpec{Name: "script", Type: cty.String, Required: true},
+	&hcldec.AttrSpec{Name: "inputs", Type: cty.List(cty.String), Required: false},
+	&hcldec.AttrSpec{Name: "network", Type: cty.Bool, Required: false},
+	&hcldec.AttrSpec{Name: "script", Type: cty.String, Required: false},
 	&hcldec.AttrSpec{Name: "shell", Type: cty.List(cty.String), Required: false},
 }
 
 var blockSpecMap = map[string]hcldec.Spec{
-	TargetBlockTypeName: storeOrTargetSpec,
-	StoreBlockTypeName:  storeOrTargetSpec,
+	TargetBlockTypeName: recipeSpec,
+	StoreBlockTypeName:  recipeSpec,
 	ConfigBlockTypeName: configSpec,
 }
 
@@ -109,7 +131,7 @@ func parseHCL(src []byte, filename string) (file *hcl.File, content *hcl.BodyCon
 func rangePointer(r hcl.Range) *hcl.Range { return &r }
 
 func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
-	schema, _ := gohcl.ImpliedBodySchema(Directory{})
+	schema, _ := gohcl.ImpliedBodySchema(lakefile{})
 	content, attrBody, diags = body.PartialContent(schema)
 	for _, block := range attrBody.(*hclsyntax.Body).Blocks {
 		if _, found := blockSpecMap[block.Type]; !found {
@@ -124,14 +146,14 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 	return content, attrBody, diags
 }
 
-func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Directory, diags hcl.Diagnostics) {
+func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (values map[string]Value, diags hcl.Diagnostics) {
 	dirParser := newOrderedParser()
 
 	diags = append(diags, dirParser.reviewBlocks(content)...)
 	diags = append(diags, dirParser.reviewAttributes(attrBody)...)
 
 	if diags.HasErrors() {
-		return Directory{}, diags
+		return nil, diags
 	}
 
 	return dirParser.walkGraphAndAssembleDirectory()
@@ -139,10 +161,10 @@ func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (directory Direc
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
-func ParseDirectory(path string) (d Directory, files map[string]*hcl.File, diags hcl.Diagnostics) {
+func ParseDirectory(path string) (values map[string]Value, files map[string]*hcl.File, diags hcl.Diagnostics) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return Directory{}, nil, diags.Append(&hcl.Diagnostic{
+		return nil, nil, diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  errors.Wrapf(err, "error attempting to read directory %q", path).Error(),
 		})
@@ -170,11 +192,11 @@ func ParseDirectory(path string) (d Directory, files map[string]*hcl.File, diags
 		attrBodies = append(attrBodies, attrBody)
 	}
 	if diags.HasErrors() {
-		return Directory{}, nil, diags
+		return nil, files, diags
 	}
 
-	d, diags = parseBody(contents, attrBodies)
-	return d, files, diags
+	values, diags = parseBody(contents, attrBodies)
+	return values, files, diags
 }
 
 // PrintDiagnostics is an opinionated use of hcl.NewDiagnosticTextWriter that

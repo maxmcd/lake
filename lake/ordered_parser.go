@@ -3,30 +3,25 @@ package lake
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/maxmcd/dag"
 	"github.com/pkg/errors"
-	"github.com/zclconf/go-cty/cty"
-	"github.com/zclconf/go-cty/cty/function"
 )
 
 type toParse struct {
-	block *hcl.Block
-	attr  *hcl.Attribute
+	block   *hcl.Block
+	attr    *hcl.Attribute
+	configs []*hcl.Block
 }
 
 type orderedParser struct {
-	graph             dag.AcyclicGraph
-	configsToParse    []toParse
+	graph             *dag.AcyclicGraph
 	referencesToParse map[string]toParse
-	evalContext       *hcl.EvalContext
 	names             map[string]hcl.Range
-	generatedStores   []StoreOrTarget
+	generatedStores   []Recipe
 }
 
 func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hcl.Range) *hcl.Diagnostic {
@@ -44,30 +39,8 @@ func newOrderedParser() *orderedParser {
 	op := &orderedParser{
 		referencesToParse: map[string]toParse{},
 		names:             map[string]hcl.Range{},
-		evalContext: &hcl.EvalContext{
-			Functions: map[string]function.Function{},
-			Variables: map[string]cty.Value{},
-		},
+		graph:             &dag.AcyclicGraph{},
 	}
-	op.evalContext.Functions["download_file"] = function.New(&function.Spec{
-		Description: `Downloads a file`,
-		Params: []function.Parameter{
-			{
-				Name:             "url",
-				Type:             cty.String,
-				AllowDynamicType: false,
-			},
-		},
-		Type: function.StaticReturnType(cty.String),
-		Impl: func(args []cty.Value, retType cty.Type) (ret cty.Value, err error) {
-			sot := StoreOrTarget{Name: "download_file", Env: map[string]string{
-				"fetch_url": "true",
-				"url":       args[0].AsString(),
-			}}
-			op.generatedStores = append(op.generatedStores, sot)
-			return sot.ctyString(), nil
-		},
-	})
 	return op
 }
 
@@ -79,29 +52,31 @@ func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) (diags hcl.Di
 				// Blocks should be validated before reaching this function
 				panic(errors.Errorf("Unexpected block type %q found", block.Type))
 			}
+			var name string
 			if block.Type == ConfigBlockTypeName {
-				op.configsToParse = append(op.configsToParse, toParse{
-					block: block,
-				})
-				continue
+				// TODO: put illegal chars in name?
+				name = ConfigBlockTypeName
+				toParse := op.referencesToParse[name]
+				toParse.configs = append(toParse.configs, block)
+				op.referencesToParse[name] = toParse
+			} else {
+				// Is "store" or "target"
+				name = block.Labels[0]
+				conflictRange, found := op.names[block.Labels[0]]
+				if found {
+					diags = append(diags, errDuplicateName(
+						name,
+						conflictRange,
+						rangePointer(block.DefRange),
+						rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+					)
+					continue
+				}
+				op.names[block.Labels[0]] = block.DefRange
+				op.referencesToParse[name] = toParse{block: block}
 			}
-			// Is "store" or "target"
-			name := block.Labels[0]
-			conflictRange, found := op.names[block.Labels[0]]
-			if found {
-				diags = append(diags, errDuplicateName(
-					name,
-					conflictRange,
-					rangePointer(block.DefRange),
-					rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
-				)
-				continue
-			}
-			op.names[block.Labels[0]] = block.DefRange
+
 			op.graph.Add(name)
-
-			op.referencesToParse[name] = toParse{block: block}
-
 			// TODO: validate correct attributes are present here, or catch later?
 			// Can this catch someone up if there are variables present in an
 			// unparsed attribute that we don't pick up here?
@@ -182,68 +157,10 @@ func (op *orderedParser) checkGraphForCycles() (diags hcl.Diagnostics) {
 	return diags
 }
 
-func (op *orderedParser) walkGraphAndAssembleDirectory() (directory Directory, diags hcl.Diagnostics) {
+func (op *orderedParser) walkGraphAndAssembleDirectory() (values map[string]Value, diags hcl.Diagnostics) {
 	if diags := op.checkGraphForCycles(); diags.HasErrors() {
-		return Directory{}, diags
+		return nil, diags
 	}
 
-	var lock sync.Mutex
-	errs := op.graph.Walk(func(v dag.Vertex) error {
-		// Force serial for now
-		lock.Lock()
-		defer lock.Unlock()
-
-		name := v.(string)
-		parse := op.referencesToParse[name]
-
-		if parse.block != nil {
-			var storeOrTarget StoreOrTarget
-
-			if diags := gohcl.DecodeBody(parse.block.Body, op.evalContext, &storeOrTarget); diags.HasErrors() {
-				for _, diag := range diags {
-					// Add more context to error
-					diag.Context = &parse.block.Body.(*hclsyntax.Body).SrcRange
-				}
-				return diags
-			}
-
-			storeOrTarget.Name = parse.block.Labels[0]
-			if parse.block.Type == StoreBlockTypeName {
-				directory.Stores = append(directory.Stores, storeOrTarget)
-			} else if parse.block.Type == TargetBlockTypeName {
-				directory.Targets = append(directory.Targets, storeOrTarget)
-			}
-
-			op.evalContext.Variables[name] = storeOrTarget.ctyString()
-		} else if parse.attr != nil {
-			var diags hcl.Diagnostics
-			if op.evalContext.Variables[name], diags = parse.attr.Expr.Value(op.evalContext); diags.HasErrors() {
-				return diags
-			}
-			return nil
-		}
-		return nil
-	})
-	for _, err := range errs {
-		diags = diags.Extend(err.(hcl.Diagnostics))
-	}
-
-	if diags.HasErrors() {
-		return Directory{}, diags
-	}
-
-	for _, store := range op.generatedStores {
-		directory.Stores = append(directory.Stores, store)
-	}
-
-	for _, parse := range op.configsToParse {
-		var config Config
-		if err := gohcl.DecodeBody(parse.block.Body, op.evalContext, &config); err != nil {
-			return Directory{}, diags.Extend(err)
-		}
-		// TODO: merge configs
-		directory.Configs = append(directory.Configs, config)
-	}
-
-	return directory, diags
+	return newWalkDecoder().walk(op.graph, op.referencesToParse)
 }
