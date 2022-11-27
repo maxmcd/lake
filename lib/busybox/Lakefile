@@ -1,0 +1,7 @@
+store "busybox_tar" {
+  env = {
+    fetch_url = "true"
+    url = "http://lake.com/busybox.tar.gz"
+  }
+  network = true
+}

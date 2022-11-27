@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/pkg/errors"
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -36,7 +37,7 @@ func (v Value) isCty() bool    { return v.cty != nil }
 
 func (v Value) MarshalJSON() ([]byte, error) {
 	if v.isCty() {
-		return json.Marshal(*v.cty)
+		return json.Marshal(ctyjson.SimpleJSONValue{Value: *v.cty})
 	}
 	return json.Marshal(*v.recipe)
 }
@@ -51,19 +52,19 @@ type Config struct {
 }
 
 type Recipe struct {
-	IsStore bool
 	Env     map[string]string `hcl:"env,optional" json:",omitempty"`
 	Inputs  []string          `hcl:"inputs,optional" json:",omitempty"`
-	Name    string            `hcl:"name,label"`
-	Script  string            `hcl:"script,optional" json:",omitempty"`
-	Network bool              `hcl:"network,optional" json:",omitempty"`
-	Shell   []string          `hcl:"shell,optional"`
+	IsStore bool
+	Name    string   `hcl:"name,label"`
+	Network bool     `hcl:"network,optional" json:",omitempty"`
+	Script  string   `hcl:"script,optional" json:",omitempty"`
+	Shell   []string `hcl:"shell,optional"`
 }
 
 func (recipe Recipe) hash() string {
 	h := sha256.New()
 	if err := json.NewEncoder(h).Encode(recipe); err != nil {
-		// Shoudn't ever happen?
+		// Shouldn't ever happen?
 		panic(err)
 	}
 	return bytesToBase32Hash(h.Sum(nil))
@@ -71,8 +72,8 @@ func (recipe Recipe) hash() string {
 
 // bytesToBase32Hash copies nix here
 // https://nixos.org/nixos/nix-pills/nix-store-paths.html
-// Finally the comments tell us to compute the base32 representation of the
-// first 160 bits (truncation) of a sha256 of the above string:
+// The comments tell us to compute the base32 representation of the
+// first 160 bits (truncation) of a sha256 of the string
 func bytesToBase32Hash(b []byte) string {
 	var buf bytes.Buffer
 	_, _ = base32.NewEncoder(base32.StdEncoding, &buf).Write(b[:20])

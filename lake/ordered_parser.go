@@ -3,12 +3,15 @@ package lake
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hcldec"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/maxmcd/dag"
 	"github.com/pkg/errors"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type toParse struct {
@@ -29,7 +32,7 @@ func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hc
 		Severity: hcl.DiagError,
 		Summary:  "Duplicate name",
 		Detail: fmt.Sprintf(
-			"The name %q has already been used at %s. Target, store, and attribute names must be unique.",
+			"The name %q has already been used at %s. Target, store, and argument names must be unique.",
 			name, conflictRange),
 		Subject: subject,
 		Context: context,
@@ -163,4 +166,136 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (values map[string]Valu
 	}
 
 	return newWalkDecoder().walk(op.graph, op.referencesToParse)
+}
+
+type walkDecoder struct {
+	values      map[string]Value
+	evalContext *hcl.EvalContext
+	config      Config
+}
+
+func newWalkDecoder() *walkDecoder {
+	return &walkDecoder{
+		evalContext: &hcl.EvalContext{
+			Functions: nil,
+			Variables: map[string]cty.Value{},
+		},
+		values: map[string]Value{},
+	}
+}
+
+// insertConfigDescendants patches our graph so that things that depend on config
+// values depend on the config in the graph. Config values are intended to be
+// defaults values for recipes that don't have those values defined. First we
+// must find the recipes that are used as inputs to the config and then we must
+// mark all other recipes as recipients of the config values. Keep in mind that
+// individual config attributes might have different dependency relationships
+// and might need to be handled separately in the future.
+func insertConfigDescendants(graph *dag.AcyclicGraph, referencesToParse map[string]toParse) {
+	// Skip if we have no configs
+	if _, found := referencesToParse[ConfigBlockTypeName]; !found {
+		return
+	}
+	ancestorNames := map[string]struct{}{ConfigBlockTypeName: {}}
+	set, _ := graph.Ancestors(ConfigBlockTypeName) // This seems like it cannot error?
+	for nameInterface := range set {
+		ancestorNames[nameInterface.(string)] = struct{}{}
+	}
+	for _, vtx := range graph.Vertices() {
+		name := vtx.(string)
+		if _, found := ancestorNames[name]; found {
+			continue
+		}
+		graph.Connect(dag.BasicEdge(name, ConfigBlockTypeName))
+	}
+}
+
+func (wd *walkDecoder) walk(graph *dag.AcyclicGraph, referencesToParse map[string]toParse) (
+	values map[string]Value, diags hcl.Diagnostics) {
+	insertConfigDescendants(graph, referencesToParse)
+	var lock sync.Mutex
+	errs := graph.Walk(func(v dag.Vertex) error {
+		// Force serial for now
+		lock.Lock()
+		defer lock.Unlock()
+
+		name := v.(string)
+		parse := referencesToParse[name]
+
+		switch {
+		case len(parse.configs) > 0:
+			for _, block := range parse.configs {
+				if diags := wd.decodeConfig(block); diags.HasErrors() {
+					return diags
+				}
+			}
+		case parse.block != nil:
+			if diags := wd.decodeRecipe(name, parse.block); diags.HasErrors() {
+				return diags
+			}
+		case parse.attr != nil:
+			if diags := wd.decodeAttribute(name, parse.attr); diags.HasErrors() {
+				return diags
+			}
+		}
+		return nil
+	})
+	for _, err := range errs {
+		diags = diags.Extend(err.(hcl.Diagnostics))
+	}
+
+	return wd.values, diags
+}
+
+func (wd *walkDecoder) decodeConfig(block *hcl.Block) (diags hcl.Diagnostics) {
+	var config Config
+	if diags := gohcl.DecodeBody(block.Body, wd.evalContext, &config); diags.HasErrors() {
+		return diags
+	}
+	if len(wd.config.Shell) > 0 && len(config.Shell) > 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Conflicting config value",
+			// TODO: cite previous occurence
+			Detail: fmt.Sprintf("Config values are global and can only be defined once per directory."),
+			// TODO: specific attribute range
+			Subject: &block.DefRange,
+			Context: &block.Body.(*hclsyntax.Body).SrcRange,
+		})
+	} else {
+		wd.config.Shell = config.Shell
+	}
+
+	return diags
+}
+
+func (wd *walkDecoder) decodeRecipe(name string, block *hcl.Block) (diags hcl.Diagnostics) {
+	var recipe Recipe
+	if diags := gohcl.DecodeBody(block.Body, wd.evalContext, &recipe); diags.HasErrors() {
+		for _, diag := range diags {
+			// Add more context to error
+			diag.Context = &block.Body.(*hclsyntax.Body).SrcRange
+		}
+		return diags
+	}
+
+	recipe.Name = name
+	if block.Type == StoreBlockTypeName {
+		recipe.IsStore = true
+	}
+	if len(recipe.Shell) == 0 {
+		recipe.Shell = wd.config.Shell
+	}
+	wd.values[name] = Value{recipe: &recipe}
+	wd.evalContext.Variables[name] = recipe.ctyString()
+	return nil
+}
+
+func (wd *walkDecoder) decodeAttribute(name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
+	if wd.evalContext.Variables[name], diags = attr.Expr.Value(wd.evalContext); diags.HasErrors() {
+		return diags
+	}
+	ctyVal := wd.evalContext.Variables[name]
+	wd.values[name] = Value{cty: &ctyVal}
+	return nil
 }

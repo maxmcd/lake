@@ -1,0 +1,31 @@
+
+
+# How does shell work?
+
+# Can be defined globally?
+# config {
+#   shell = ["${busybox_tar}/bin/busybox", "sh", "-c"]
+# }
+
+# And then I can just run scripts?
+# Is busybox_tar now an inferred dependency?
+store "one" {
+  inputs = ["./script.sh"]
+  script = "./script.sh"
+}
+
+# I can override?
+store "two" {
+  shell  = ["${busybox_tar}/bin/busybox", "bash", "-c"]
+  inputs = ["./script.sh"]
+  script = "./script.sh"
+}
+
+# Look how minimal?
+target "say-hi" { script = "echo hi" }
+
+# A shell might have environment variables or other metadata, we assume that the
+# builder of the shell will add these things as hacks? Or do we allow shells to
+# be configured?
+
+

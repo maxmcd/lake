@@ -1,27 +1,32 @@
-// import "github.com/maxmcd/lake/lib" {}
-// https://github.com/google/starlark-go/blob/master/starlark/example_test.go
+# import "github.com/maxmcd/lake/lib/busybox" {}
+# https://github.com/google/starlark-go/blob/master/starlark/example_test.go
 
-store "busybox_tar" { 
+
+store "busybox_tar" {
   env = {
     fetch_url = "true"
-    url = "http://lake.com/busybox.tar.gz" 
+    url       = "http://lake.com/busybox.tar.gz"
   }
   network = true
 }
 
-
 config {
+  # Shell? Builder? Interpreter? Command?
   shell = ["${busybox_tar}/bin/busybox", "sh"]
 }
 
 store "busybox_store" {
+  # TODO: check that this file exists
   inputs = [
-    busybox_tar, "./script.sh", 
-    // lib.lake_tar_gz,
+    busybox_tar, "./script.sh",
+    # lib.lake_tar_gz,
   ]
   env = {
     FOO = "bar"
   }
+  # TODO: consider
+  # network = true
+  # target = "x86"
   script = <<EOH
     #!${busybox_tar}/bin/busybox sh
     sh ./script.sh
@@ -31,6 +36,7 @@ store "busybox_store" {
 
 build_script = "./script.sh"
 
+# TODO: validate store names contain valid characters for arguments
 store "busybox_store_alt" {
   inputs = [busybox_tar, build_script]
   shell  = ["${busybox_tar}/bin/busybox", "sh"]
@@ -54,6 +60,9 @@ target "busybox" {
 # Do self references work? Doesn't this loop infinitely? How do wildcard matches
 # work with various identifier names? Like what if I have another target called
 # "./other.Lakefile"?
+#
+# fwiw Make doesn't allow this, how do we do modification of existing files?
+# just as target commands?
 target "./*Lakefile" {
   inputs = ["./*Lakefile"]
   script = <<EOH

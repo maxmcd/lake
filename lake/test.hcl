@@ -38,10 +38,10 @@ test "basic functionality" {
     config {
       shell = ["${busybox_tar}/bin/busybox", "sh"]
     }
-    store "busybox_tar" { 
+    store "busybox_tar" {
       env = {
         fetch_url = "true"
-        url = "http://lake.com/busybox.tar.gz" 
+        url = "http://lake.com/busybox.tar.gz"
       }
       network = true
     }
@@ -103,7 +103,7 @@ test "store target circular reference" {
 }
 
 
-test "attribute circular reference" {
+test "argument circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
     a = "${c}"
@@ -112,7 +112,7 @@ test "attribute circular reference" {
   }
 }
 
-test "mixed attribute store target circular reference" {
+test "mixed argument store target circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
     a = "${c}"
