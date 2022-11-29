@@ -1,0 +1,10 @@
+{
+    "Interpreter": [
+        "/opt/homebrew/bin/python3",
+        "-x"
+    ],
+    "File": "main.py",
+    "Env": [
+        "FOO=bar"
+    ]
+}
