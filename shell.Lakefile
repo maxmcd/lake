@@ -16,7 +16,7 @@ store "one" {
 
 # I can override?
 store "two" {
-  shell  = ["${busybox_tar}/bin/busybox", "bash", "-c"]
+  shell  = ["${_busybox_tar}/bin/busybox", "bash", "-c"]
   inputs = ["./script.sh"]
   script = "./script.sh"
 }

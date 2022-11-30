@@ -1,7 +1,36 @@
 store "busybox_tar" {
-  env = {
-    fetch_url = "true"
-    url = "http://lake.com/busybox.tar.gz"
-  }
+  env     = { fetch_url = "true", url = "https://brmbl.s3.amazonaws.com/busybox-x86_64.tar.gz" }
   network = true
 }
+
+store "busybox_store" {
+  inputs = [busybox_tar, "./install.sh", ]
+  shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
+  script = <<EOH
+    ${busybox_tar}/busybox-x86_64 sh ./install.sh
+  EOH
+}
+
+# Should this be allowed to work?
+# store "busybox_store" {
+#   inputs = [busybox_tar, "./install.sh", ]
+#   shell  = ["${busybox_tar}/busybox-x86_64", "sh", "./install.sh"]
+# }
+
+target "busybox" {
+  shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
+  inputs = [busybox_store]
+  script = <<EOH
+  PATH=$PATH:$busybox_store/bin
+  busybox sh $@
+  EOH
+}
+
+# This is weirdly legal? Would expand to be the target in a recipe?
+ls = "${busybox} ls"
+
+# Also legal!?
+mkdir = "${busybox_store}/bin/busybox mkdir"
+
+# Jesus can you use a target as a shell?
+shell = [busybox]

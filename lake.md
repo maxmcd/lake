@@ -1,7 +1,32 @@
 
 # Lake
 
-Goals:
+- [Lake](#lake)
+  - [Goals and Features](#goals-and-features)
+  - [Basic Example of Functionality](#basic-example-of-functionality)
+  - [Stories](#stories)
+    - [Use a target as a command](#use-a-target-as-a-command)
+    - [Generate a file using echo](#generate-a-file-using-echo)
+    - [Lakefile namespace is shared across files in a directory](#lakefile-namespace-is-shared-across-files-in-a-directory)
+    - [Lakefile config sets the default shell](#lakefile-config-sets-the-default-shell)
+    - [Download a file and use it as an executable](#download-a-file-and-use-it-as-an-executable)
+    - [Build downloaded files and output their results](#build-downloaded-files-and-output-their-results)
+    - [Import from another Lakefile](#import-from-another-lakefile)
+    - [Use a target/command as an input to a store and reference it within the build script](#use-a-targetcommand-as-an-input-to-a-store-and-reference-it-within-the-build-script)
+    - [Generate a directory](#generate-a-directory)
+    - [Use a glob pattern or directory as an input](#use-a-glob-pattern-or-directory-as-an-input)
+    - [Use a negative glob pattern to exclude files?](#use-a-negative-glob-pattern-to-exclude-files)
+    - [Use the network](#use-the-network)
+    - [Use a cache directory](#use-a-cache-directory)
+  - [Internals](#internals)
+    - [Simple parse and build example](#simple-parse-and-build-example)
+  - [Open questions](#open-questions)
+
+This document describes the high-level goals, features, and functionality for Lake.
+
+## Goals and Features
+
+Goals and features:
 - Hcl config syntax
 - "pure", only uses executables and libraries through external dependencies
 - Write scripts to generate files
@@ -14,10 +39,13 @@ Goals:
 - Import other lake files and manage many lake files in many folders within one project
 - Building across different platforms
 
+## Basic Example of Functionality
 
 ./busybox/script.sh
 
 ```sh
+# Lists all programs supported by the busybox binary and creates symlinks for
+# each program in the $out/bin folder
 set -e
 $busybox_tar/busybox-x86_64 mkdir $out/bin
 $busybox_tar/busybox-x86_64 cp $busybox_tar/busybox-x86_64 $out/bin/busybox
@@ -81,7 +109,6 @@ target "say_hello" {
   EOH
 }
 
-
 target "./one.txt" {
   script = <<EOH
     echo 1 > ./one.txt
@@ -98,10 +125,11 @@ $ cat ./one.txt
 ```
 
 
-# Stories
+## Stories
 
+A collection of user stories that describe functionality Lake expects to support.
 
-## Use a target as a command
+### Use a target as a command
 
 ```hcl
 target "ls" {
@@ -150,7 +178,7 @@ But this doesn't work, because we can't assume the shell context is the same. So
 
 Do we inject a static executable `$hydrator $script-config` and then this thing runs an `exec` with the values included? Would be great to avoid injecting an executable. How else do we invoke `exec` in an environment-agnostic way?
 
-## Generate a file using echo
+### Generate a file using echo
 
 ```hcl
 target "./bar.txt" {
@@ -173,7 +201,7 @@ When building `bar.txt` no source files are listed. We'll start the build in an 
 Once that is built we can build `foo.txt`. A similar random folder is created but `./bar.txt` is copied into the build environment.
 
 
-## Lakefile namespace is shared across files in a directory
+### Lakefile namespace is shared across files in a directory
 
 **./download.Lakefile**
 
@@ -205,7 +233,7 @@ store "busybox_store" {
 ```
 
 
-## Lakefile config sets the default shell
+### Lakefile config sets the default shell
 
 
 ```hcl
@@ -219,7 +247,7 @@ target "say hi" { script = "echo hi" }
 
 ```
 
-## Download a file and use it as an executable
+### Download a file and use it as an executable
 
 ```hcl
 store "busybox_tar" {
@@ -240,7 +268,7 @@ store "busybox_store" {
 The store recipe with a `fetch_url` set to true and a `url` is a special store that will use the network to download a file.
 Once downloaded, other recipes can then directly reference the the enclosed files.
 
-## Build downloaded files and output their results
+### Build downloaded files and output their results
 
 ./busybox/script.sh
 
@@ -274,7 +302,7 @@ store "busybox_store" {
 
 Stores put their outputs in an $out directory. Alternatively file generation recipes just update the expected output at the expected location.
 
-## Import from another lakefile
+### Import from another Lakefile
 
 
 **./foo/Lakefile**
@@ -307,7 +335,7 @@ store "foo" {}
 hello_max = "${thing.hello} max"
 ```
 
-## Use a target/command as an input to a store and reference it within the build script
+### Use a target/command as an input to a store and reference it within the build script
 
 ```hcl
 target "ls" {
@@ -325,15 +353,15 @@ target "./this_file" {
 }
 ```
 
-## Generate a directory
+### Generate a directory
 
-## Use a glob pattern or directory as an input
+### Use a glob pattern or directory as an input
 
-## Use a negative glob pattern to exclude files?
+### Use a negative glob pattern to exclude files?
 
-## Use the network
+### Use the network
 
-## Use a cache directory
+### Use a cache directory
 
 ```hcl
 store "go_binary" {
@@ -349,9 +377,65 @@ store "go_binary" {
 }
 ```
 
-# Notes
 
-## Project setup
+## Internals
+
+### Simple parse and build example
+
+Take our simple busybox example. How is this parsed and then built?
+
+```hcl
+store "busybox_tar" {
+  env     = { fetch_url = "true", url = "https://brmbl.s3.amazonaws.com/busybox-x86_64.tar.gz" }
+  network = true
+}
+
+store "busybox_store" {
+  inputs = [busybox_tar, "./install.sh", ]
+  shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
+  script = <<EOH
+    ${busybox_tar}/busybox-x86_64 sh ./install.sh
+  EOH
+}
+```
+
+Parsing this file spits out the following json:
+
+```json
+{
+  "busybox_store": {
+    "Inputs": [
+      "{{ 525zavu5llf5gyfyq73x5mys6mrs7vha }}",
+      "./install.sh"
+    ],
+    "IsStore": true,
+    "Name": "busybox_store",
+    "Script": "    {{ 525zavu5llf5gyfyq73x5mys6mrs7vha }}/busybox-x86_64 sh ./install.sh\n",
+    "Shell": [
+      "{{ 525zavu5llf5gyfyq73x5mys6mrs7vha }}/busybox-x86_64",
+      "sh"
+    ]
+  },
+  "busybox_tar": {
+    "Env": {
+      "fetch_url": "true",
+      "url": "https://brmbl.s3.amazonaws.com/busybox-x86_64.tar.gz"
+    },
+    "IsStore": true,
+    "Name": "busybox_tar",
+    "Network": true
+  }
+}
+```
+
+We get a map with two values, each representing one of our recipes. `busybox_tar` uses the `fetch_url` built-in. It has no inputs, no shell and no script. `busybox_store` uses files from `busybox_tar` in its execution. To track that reference you can see that we've replaced the `${busybox_tar}` argument with the value `{{ 525zavu5llf5gyfyq73x5mys6mrs7vha }}`. This value is a template value containing a hash of `busybox_tar`. We use these hashes to track references between difference recipes.
+
+The dependency chain here is simple, first we build `busybox_tar` and then we can use the resulting values to build `busybox_store`.
+
+```mermaid
+graph TD;
+    busybox_tar-->busybox_store;
+```
 
 - Need a sum file for download hashes
 - Otherwise we could use gopath-style dependency tree?
@@ -361,11 +445,6 @@ store "go_binary" {
 
 
 
-## Laws to question
+## Open questions
 
-- Must run things in sandbox or processes will look at files and break reproducibility
-- Must copy files into sandbox, can't reference local files? (overlay fs?)
-- Build results must go into $out folder (not with makefile pattern, at least with file generation use cases...)
-
-
-How do commands work? how do arguments work?
+- How do commands work? how do arguments work?

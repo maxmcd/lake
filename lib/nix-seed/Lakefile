@@ -1,0 +1,25 @@
+import "github.com/maxmcd/lake/lib/busybox" {}
+
+
+config { shell = busybox.shell }
+
+store "_static_patchelf" {
+  env     = { fetch_url = "true", url = "https://brmbl.s3.amazonaws.com/patchelf.tar.gz", hash = "icpfggjznz3jxnctxtcky55g7zhbsk4u" }
+  network = true
+}
+
+target "patchelf" {
+  inputs = [_static_patchelf]
+  script = "$_static_patchelf/patchelf $@"
+}
+
+
+store "_nix_bootstrap_tar" {
+  env     = { fetch_url = "true", url = "http://tarballs.nixos.org/stdenv-linux/x86_64/c5aabb0d603e2c1ea05f5a93b3be82437f5ebf31/bootstrap-tools.tar.xz" }
+  network = true
+}
+
+store "stdenv" {
+  inputs = [_nix_bootstrap_tar, "./build_stdenv.sh", patchelf]
+  script = "sh build_stdenv.sh"
+}

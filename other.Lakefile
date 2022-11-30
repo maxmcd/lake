@@ -1,7 +1,7 @@
 target "busybox_shell" {
   inputs = [busybox_store]
   script = <<EOH
-    #!${busybox_tar}/bin/busybox sh
+    #!${_busybox_tar}/bin/busybox sh
     export PATH=$busybox_store/bin/
     sh $@
   EOH

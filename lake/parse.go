@@ -58,7 +58,7 @@ type Recipe struct {
 	Name    string   `hcl:"name,label"`
 	Network bool     `hcl:"network,optional" json:",omitempty"`
 	Script  string   `hcl:"script,optional" json:",omitempty"`
-	Shell   []string `hcl:"shell,optional"`
+	Shell   []string `hcl:"shell,optional" json:",omitempty"`
 }
 
 func (recipe Recipe) hash() string {

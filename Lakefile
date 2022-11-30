@@ -2,23 +2,20 @@
 # https://github.com/google/starlark-go/blob/master/starlark/example_test.go
 
 
-store "busybox_tar" {
-  env = {
-    fetch_url = "true"
-    url       = "http://lake.com/busybox.tar.gz"
-  }
+store "_busybox_tar" {
+  env     = { fetch_url = "true", url = "http://lake.com/busybox.tar.gz" }
   network = true
 }
 
 config {
   # Shell? Builder? Interpreter? Command?
-  shell = ["${busybox_tar}/bin/busybox", "sh"]
+  shell = ["${_busybox_tar}/bin/busybox", "sh"]
 }
 
 store "busybox_store" {
   # TODO: check that this file exists
   inputs = [
-    busybox_tar, "./script.sh",
+    _busybox_tar, "./script.sh",
     # lib.lake_tar_gz,
   ]
   env = {
@@ -28,7 +25,7 @@ store "busybox_store" {
   # network = true
   # target = "x86"
   script = <<EOH
-    #!${busybox_tar}/bin/busybox sh
+    #!${_busybox_tar}/bin/busybox sh
     sh ./script.sh
   EOH
 }
@@ -38,8 +35,8 @@ build_script = "./script.sh"
 
 # TODO: validate store names contain valid characters for arguments
 store "busybox_store_alt" {
-  inputs = [busybox_tar, build_script]
-  shell  = ["${busybox_tar}/bin/busybox", "sh"]
+  inputs = [_busybox_tar, build_script]
+  shell  = ["${_busybox_tar}/bin/busybox", "sh"]
   script = "sh ./script.sh"
 }
 
@@ -63,6 +60,9 @@ target "busybox" {
 #
 # fwiw Make doesn't allow this, how do we do modification of existing files?
 # just as target commands?
+#
+# TODO: disallow globs and circular references (if we figure out how to add them
+# we can do it later)
 target "./*Lakefile" {
   inputs = ["./*Lakefile"]
   script = <<EOH
