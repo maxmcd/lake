@@ -61,10 +61,19 @@ type Recipe struct {
 	Shell   []string `hcl:"shell,optional" json:",omitempty"`
 }
 
-func (recipe Recipe) hash() string {
+func (recipe Recipe) JSON() string {
+	b, err := json.Marshal(recipe)
+	if err != nil {
+		// Shouldn't happen
+		panic(err)
+	}
+	return string(b)
+}
+
+func (recipe Recipe) Hash() string {
 	h := sha256.New()
 	if err := json.NewEncoder(h).Encode(recipe); err != nil {
-		// Shouldn't ever happen?
+		// Shouldn't happen
 		panic(err)
 	}
 	return bytesToBase32Hash(h.Sum(nil))
@@ -81,7 +90,7 @@ func bytesToBase32Hash(b []byte) string {
 }
 
 func (recipe Recipe) ctyString() cty.Value {
-	return cty.StringVal(fmt.Sprintf("{{ %s }}", recipe.hash()))
+	return cty.StringVal(fmt.Sprintf("{{ %s }}", recipe.Hash()))
 }
 
 var (

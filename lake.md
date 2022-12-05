@@ -20,6 +20,7 @@
     - [Use a cache directory](#use-a-cache-directory)
   - [Internals](#internals)
     - [Simple parse and build example](#simple-parse-and-build-example)
+    - [Imports and product structure](#imports-and-product-structure)
   - [Open questions](#open-questions)
 
 This document describes the high-level goals, features, and functionality for Lake.
@@ -437,12 +438,82 @@ graph TD;
     busybox_tar-->busybox_store;
 ```
 
-- Need a sum file for download hashes
-- Otherwise we could use gopath-style dependency tree?
-- lake.hcl project file?
-- dependencies are named and configured centrally? what about nearby directories?
-- No relative imports would be nice
+### Imports and product structure
 
+> **Scratch notes**
+> - Need a sum file for download hashes
+> - Otherwise we could use gopath-style dependency tree?
+> - lake.hcl project file?
+> - Dependencies are named and configured centrally? what about nearby directories?
+> - No relative imports would be nice
+
+Rough options:
+
+1.
+    Be like Go, use a GOPATH style source tree and expect manual dependency resolution at first with reproducible dependency resolution added later with a proxy service to help with version registration.
+
+    Pros:
+      -  Import paths are actually a name of a place where the thing can be found
+      -  No relative paths anywhere
+      -  Don't have to set up a hosted package registry (no dealing with related security or management either!)
+
+    Cons:
+      -  Major version structure is awkward/confusing
+      -  Changing location of sub-packages within a single repo can lead to lots of undefined behavior
+      -  The possibility of packages existing at multiple path depths creates complexity during resolution
+      -  Unclear how to reference local packages
+      -  Import names are long (necessitates tooling like goimports)
+
+
+2. Be like rust/js, packages have names, they are registered in a central registry, they have versions, they can also be local paths and version control repositories (but no version resolution if they do!).
+
+    Pros
+     - People know how this works
+     - Import names are short and intuitive (as long as relative import paths are disallowed)
+     - Global namespace of names means communicating packages is crystal clear
+
+    Cons
+     - Ugh central control of names
+     - Package security drama
+     - Short names are good until fork/rename/split/refactor
+     - Usually entirely unclear how code ended up in the package registry, can be pushed from private, can be different than version control
+
+
+What if we have a `lake.hcl` that lists package names, but only points to version control repos?
+
+**lake.hcl**
+
+```hcl
+name = "lake"
+dependencies {
+  boat    = "github.com/maxmcd/boat"
+  boat_v2 = "github.com/maxmcd/boat@v2"
+  swimmer = { thing = "github.com/maxmcd/swimmer", version = "3" }
+  duck    = { path = "../" }
+}
+```
+
+And then in the Lakefile, imports are just:
+
+```hcl
+import "lake/lib/busybox" {}
+import "boat" {}
+# or?
+imports {
+  busybox = "lake/lib/busybox"
+  boat = "boat"
+}
+```
+
+Pros:
+- Import names are simple
+- Versioning and package location complexity are handled in a single file
+- Refactors and cloning repos are possible without replacing all import statements in package
+- Still using file paths, don't need to figure out exporting a single "module"
+
+Cons:
+- Short ambiguous names
+- not enough context in a single file example to execute code
 
 
 ## Open questions

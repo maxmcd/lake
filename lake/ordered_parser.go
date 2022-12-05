@@ -210,6 +210,15 @@ func insertConfigDescendants(graph *dag.AcyclicGraph, referencesToParse map[stri
 	}
 }
 
+func mermaidGraph(graph *dag.AcyclicGraph) string {
+	sb := strings.Builder{}
+	sb.WriteString("graph TD;\n")
+	for _, edge := range graph.Edges() {
+		fmt.Fprintf(&sb, "    %s --> %s\n", dag.VertexName(edge.Source()), dag.VertexName(edge.Target()))
+	}
+	return sb.String()
+}
+
 func (wd *walkDecoder) walk(graph *dag.AcyclicGraph, referencesToParse map[string]toParse) (
 	values map[string]Value, diags hcl.Diagnostics) {
 	insertConfigDescendants(graph, referencesToParse)
@@ -256,7 +265,7 @@ func (wd *walkDecoder) decodeConfig(block *hcl.Block) (diags hcl.Diagnostics) {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Conflicting config value",
-			// TODO: cite previous occurence
+			// TODO: cite previous occurrence
 			Detail: fmt.Sprintf("Config values are global and can only be defined once per directory."),
 			// TODO: specific attribute range
 			Subject: &block.DefRange,
@@ -288,6 +297,7 @@ func (wd *walkDecoder) decodeRecipe(name string, block *hcl.Block) (diags hcl.Di
 	}
 	wd.values[name] = Value{recipe: &recipe}
 	wd.evalContext.Variables[name] = recipe.ctyString()
+
 	return nil
 }
 

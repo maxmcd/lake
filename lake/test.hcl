@@ -16,7 +16,7 @@ test "store and target name conflict" {
   file "Lakefile" {
     target "empty_store" {
       inputs = []
-      script = "${foo}"
+      script = foo
     }
     store "empty_store" {
       inputs = []
@@ -41,7 +41,7 @@ test "basic functionality" {
     store "busybox_tar" {
       env = {
         fetch_url = "true"
-        url = "http://lake.com/busybox.tar.gz"
+        url       = "http://lake.com/busybox.tar.gz"
       }
       network = true
     }
@@ -106,16 +106,16 @@ test "store target circular reference" {
 test "argument circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
-    a = "${c}"
-    b = "${a}"
-    c = "${b}"
+    a = c
+    b = a
+    c = b
   }
 }
 
 test "mixed argument store target circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
-    a = "${c}"
+    a = c
     target "b" {
       inputs = [a]
       script = ""
