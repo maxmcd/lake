@@ -1,40 +1,53 @@
+<h1>Lake</h1>
 
-# Lake
+- [Overview](#overview)
+- [Basic Example of Functionality](#basic-example-of-functionality)
+- [Stories](#stories)
+  - [Use a target as a command](#use-a-target-as-a-command)
+  - [Generate a file using echo](#generate-a-file-using-echo)
+  - [Lakefile namespace is shared across files in a directory](#lakefile-namespace-is-shared-across-files-in-a-directory)
+  - [Lakefile config sets the default shell](#lakefile-config-sets-the-default-shell)
+  - [Download a file and use it as an executable](#download-a-file-and-use-it-as-an-executable)
+  - [Build downloaded files and output their results](#build-downloaded-files-and-output-their-results)
+  - [Import from another Lakefile](#import-from-another-lakefile)
+  - [Use a target/command as an input to a store and reference it within the build script](#use-a-targetcommand-as-an-input-to-a-store-and-reference-it-within-the-build-script)
+  - [Generate a directory](#generate-a-directory)
+  - [Use a glob pattern or directory as an input](#use-a-glob-pattern-or-directory-as-an-input)
+  - [Use a negative glob pattern to exclude files?](#use-a-negative-glob-pattern-to-exclude-files)
+  - [Use the network](#use-the-network)
+  - [Use a cache directory](#use-a-cache-directory)
+- [Internals](#internals)
+  - [Simple parse and build example](#simple-parse-and-build-example)
+  - [Imports and product structure](#imports-and-product-structure)
 
-- [Lake](#lake)
-  - [Goals and Features](#goals-and-features)
-  - [Basic Example of Functionality](#basic-example-of-functionality)
-  - [Stories](#stories)
-    - [Use a target as a command](#use-a-target-as-a-command)
-    - [Generate a file using echo](#generate-a-file-using-echo)
-    - [Lakefile namespace is shared across files in a directory](#lakefile-namespace-is-shared-across-files-in-a-directory)
-    - [Lakefile config sets the default shell](#lakefile-config-sets-the-default-shell)
-    - [Download a file and use it as an executable](#download-a-file-and-use-it-as-an-executable)
-    - [Build downloaded files and output their results](#build-downloaded-files-and-output-their-results)
-    - [Import from another Lakefile](#import-from-another-lakefile)
-    - [Use a target/command as an input to a store and reference it within the build script](#use-a-targetcommand-as-an-input-to-a-store-and-reference-it-within-the-build-script)
-    - [Generate a directory](#generate-a-directory)
-    - [Use a glob pattern or directory as an input](#use-a-glob-pattern-or-directory-as-an-input)
-    - [Use a negative glob pattern to exclude files?](#use-a-negative-glob-pattern-to-exclude-files)
-    - [Use the network](#use-the-network)
-    - [Use a cache directory](#use-a-cache-directory)
-  - [Internals](#internals)
-    - [Simple parse and build example](#simple-parse-and-build-example)
-    - [Imports and product structure](#imports-and-product-structure)
-  - [Open questions](#open-questions)
+## Overview
 
-This document describes the high-level goals, features, and functionality for Lake.
+Lake is a build system. Builds are defined using files named `Lakefile` or with
+the extension `.Lakefile`. A directory containing lakefiles represents a single
+package. A namespace is shared across files within a directory (like
+Go/terraform).
 
-## Goals and Features
+Each lakefile specifies `target` recipes and `store` recipes.
 
-Goals and features:
+A `store` is a library or program that is built and stored in the central build
+store. It can then be referenced in another `store` or `target`.
+
+A `target` is a file/directory that will be generated, or it is a command that
+can be invoked from within the directory it is specified. If a target name
+starts with a relative path `./` it is considered to be a file. If it doesn't, it
+is a command.
+
+`store` and `target` recipes have `inputs`. When a target command is executed
+all `inputs` are assembled and any necessary dependencies are built in order.
+
+Rough notes on some goals and features:
 - Hcl config syntax
 - "pure", only uses executables and libraries through external dependencies
 - Write scripts to generate files
-- Write scripts to add programs to a "store"
+- Write scripts to add files to a "store"
 - File generation a first class pattern (like make)
 - Build docker images
-- Cache directory
+- Allow mounting of a cache directory within a store builds
 - Compile a Go program and pull dependencies without the network
 - Store dependencies and hashes/lock data
 - Import other lake files and manage many lake files in many folders within one project
@@ -143,7 +156,7 @@ target "ls" {
 
 This can then be run like so:
 ```bash
-$ ls -lah ./lib
+$ lake ls -lah ./lib
 total 0
 drwxr-xr-x   3 max  staff    96B Nov 26 22:34 .
 drwxr-xr-x  15 max  staff   480B Nov 26 22:22 ..
@@ -356,11 +369,89 @@ target "./this_file" {
 
 ### Generate a directory
 
+- If any sources have changed we re-generate the directory
+- If the directory exists and sources have changed, but the directory contents have changed what do we do?
+- Maybe generating directories is unwise, could lead to correctness ambiguity?
+- Oh, or maybe we consider that the directory is owned by lake, if we rebuild we delete and re-create the contents?
+
+```hcl
+target "./this_dir" {
+  inputs = [busybox]
+  script = <<EOH
+    mkdir ./this_dir
+    touch ./this_dir/thing
+  EOH
+}
+```
+
 ### Use a glob pattern or directory as an input
+
+Bazel doesn't allow a directory to be specified by name unless a glob is used to
+include files it contains. A glob will also only match files and no
+sub-directories unless a `**` is used. . Should we do the same? The
+`"./this_dir"` example below would be harder to inspect and know that it's
+including many files.
+
+```hcl
+target "print_sha256sum_of_dir" {
+  inputs = [busybox, "./this_dir"]
+  script = <<EOH
+    tar ./this_dir - | sha256sum
+  EOH
+}
+```
+or
+```hcl
+target "print_sha256sum_of_dir" {
+  inputs = [busybox, "./this_dir/*"]
+  script = <<EOH
+    tar ./this_dir - | sha256sum
+  EOH
+}
+```
+or
+```hcl
+target "print_sha256sum_of_dir" {
+  inputs = [busybox, "./this_dir/**"]
+  script = <<EOH
+    tar ./this_dir - | sha256sum
+  EOH
+}
+```
+
 
 ### Use a negative glob pattern to exclude files?
 
+```hcl
+store "something" {
+  inputs = [busybox, "./this_dir/**", "!./this_dir/readme.md"]
+}
+```
+
+To allow very specific specification of source files we could use a negative
+match to exclude specific files.
+
 ### Use the network
+
+By default the network is disabled in `store` recipes. The network can be
+enabled with the `network` attribute. Built-in "fetchers" will be allowed to use
+the network but will verify that the resource being requested matches a hash
+that is stored in a lock file. Use of the network outside of a fetcher should be
+avoided and will introduce the possibility of breaking reproducibility.
+
+```hcl
+# A custom store
+store "something" {
+  inputs = [busybox]
+  network = true
+}
+
+# out fetch_url built-in
+store "busybox_tar" {
+  env     = { fetch_url = "true", url = "https://brmbl.s3.amazonaws.com/busybox-x86_64.tar.gz" }
+  network = true
+}
+```
 
 ### Use a cache directory
 
@@ -516,6 +607,3 @@ Cons:
 - not enough context in a single file example to execute code
 
 
-## Open questions
-
-- How do commands work? how do arguments work?
