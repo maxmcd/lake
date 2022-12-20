@@ -594,12 +594,16 @@ And then in the Lakefile, imports are just:
 
 ```hcl
 import "lake/lib/busybox" {}
-import "boat" {}
+import "boat" { alias = "other_name" }
 # or?
 imports {
   busybox = "lake/lib/busybox"
   boat = "boat"
+  b2 = "boat_v2"
 }
+
+# or this!
+imports = ["foo", {boat = "bat"}]
 ```
 
 Pros:

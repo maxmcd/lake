@@ -6,4 +6,8 @@ var (
 	LakeFilename = "Lakefile"
 )
 
+var (
+	importsAttributeName = "imports"
+)
+
 type ImportFunction func(name string) (values map[string]Value, diags hcl.Diagnostics)

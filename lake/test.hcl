@@ -126,3 +126,20 @@ test "mixed argument store target circular reference" {
     }
   }
 }
+
+
+
+test "import name conflicts with local variable" {
+  err_contains = "Circular reference"
+  file "Lakefile" {
+    a = c
+    target "b" {
+      inputs = [a]
+      script = ""
+    }
+    store "c" {
+      inputs = [b]
+      script = ""
+    }
+  }
+}

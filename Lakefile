@@ -1,5 +1,7 @@
-import "foo" {}
-
+imports = [
+  "lake",
+  { boat = "bat" },
+]
 
 # https://github.com/google/starlark-go/blob/master/starlark/example_test.go
 
@@ -18,7 +20,8 @@ store "busybox_store" {
   # TODO: check that this file exists
   inputs = [
     _busybox_tar, "./script.sh",
-    foo,
+    lake.fish,
+    boat.fish,
   ]
   env = {
     FOO = "bar"

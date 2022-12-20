@@ -56,26 +56,24 @@ func newOrderedParser(pkg Package, importFunc ImportFunction) *orderedParser {
 		nameStore:         newNameStore(pkg),
 		pkg:               pkg,
 		importFunc:        importFunc,
+		imports:           map[string]map[string]Value{},
 	}
 	return op
 }
 
-func (op *orderedParser) loadOrRetrieveImport(importName string) (values map[string]Value, diags hcl.Diagnostics) {
+func (op *orderedParser) loadImport(importName string) (diags hcl.Diagnostics) {
 	values, found := op.imports[importName]
 	if found {
-		return values, nil
+		return nil
 	}
 	values, diags = op.importFunc(importName)
-	if diags.HasErrors() {
-		return nil, diags
-	}
 	op.imports[importName] = values
-	return values, diags
+	return diags
 }
 
 func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 	for _, file := range op.pkg.files {
-		for _, block := range file.content.Blocks {
+		for _, block := range file.blocks {
 			spec, found := blockSpecMap[block.Type]
 			if !found {
 				// Blocks should be validated before reaching this function
@@ -88,24 +86,6 @@ func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 				toParse := op.referencesToParse[name]
 				toParse.configs = append(toParse.configs, block)
 				op.referencesToParse[name] = toParse
-			} else if block.Type == ImportBlockTypeName {
-				importName := block.Labels[0]
-				values, theseDiags := op.loadOrRetrieveImport(importName)
-				if diags.HasErrors() {
-					// Return immediately, we would likely get parse errors from
-					// variables we expect to be exported. We just show the
-					// errors we've gotten.
-					return append(diags, theseDiags...)
-				}
-
-				// ????
-				importObjValue := valueMapToCTYObject(values)
-				_ = importObjValue
-
-				// TODO: this won't work
-				// TODO: add values to something
-				diags = append(diags, op.nameStore.addImport(file.filename, importName, block)...)
-				op.referencesToParse[importName] = toParse{block: block}
 			} else {
 				// Is "store" or "target"
 				name = block.Labels[0]
@@ -118,27 +98,72 @@ func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 			// Can this catch someone up if there are variables present in an
 			// unparsed attribute that we don't pick up here?
 			for _, variable := range hcldec.Variables(block.Body, spec) {
-				op.graph.Add(variable.RootName())
-				op.graph.Connect(dag.BasicEdge(name, variable.RootName()))
+				varName := variableName(variable)
+				op.graph.Add(varName)
+				op.graph.Connect(dag.BasicEdge(name, varName))
 			}
 		}
 	}
 	return diags
 }
 
-func (op *orderedParser) reviewAttributes() (diags hcl.Diagnostics) {
-	for _, file := range op.pkg.files {
-		// TODO: Confused about why this is required, docs say identified blocks are
-		// removed by Body.PartialContent
-		file.attrBody.(*hclsyntax.Body).Blocks = nil
+func variableName(v hcl.Traversal) string {
+	var sb strings.Builder
+	for _, part := range v {
+		switch t := part.(type) {
+		case hcl.TraverseRoot:
+			sb.WriteString(t.Name)
+		case hcl.TraverseAttr:
+			sb.WriteString("." + t.Name)
+		default:
+			panic(v)
+		}
+	}
+	return sb.String()
+}
 
-		attributes, theseDiags := file.attrBody.JustAttributes()
-		if theseDiags.HasErrors() {
-			diags = append(diags, theseDiags...)
+func (op *orderedParser) loadImports() (diags hcl.Diagnostics) {
+
+	for _, file := range op.pkg.files {
+		imports, found := file.attributes[importsAttributeName]
+		if !found {
 			continue
 		}
-		for _, attr := range attributes {
-			name := attr.Name
+		importLine := imports.Range.Start.Line
+		for _, attr := range file.attributes {
+			attr.Range.Start.Line
+		}
+	}
+	// if name == importsAttributeName {
+	// 	if i != 0 {
+	// 		return hcl.Diagnostics{&hcl.Diagnostic{
+	// 			Severity: hcl.DiagError,
+	// 			Summary:  "Invalid imports",
+	// 			Detail: fmt.Sprintf(
+	// 				"Imports must be defined as the first attribute in a file.",
+	// 			),
+	// 			Subject: &attr.Range,
+	// 			Context: &attr.Range,
+	// 		}}
+	// 	}
+	// }
+	// } else if block.Type == ImportBlockTypeName {
+	// 	importName := block.Labels[0]
+
+	// 	if theseDiags := op.loadImport(importName); theseDiags.HasErrors() {
+	// 		// Return immediately, we would likely get parse errors from
+	// 		// variables we expect to be exported. We just show the
+	// 		// errors we've gotten.
+	// 		return append(diags, theseDiags...)
+	// 	}
+
+	// 	diags = append(diags, op.nameStore.addImport(file.filename, importName, block)...)
+	return nil
+}
+
+func (op *orderedParser) reviewAttributes() (diags hcl.Diagnostics) {
+	for _, file := range op.pkg.files {
+		for name, attr := range file.attributes {
 			diags = append(diags, op.nameStore.addAttr(name, attr)...)
 			op.graph.Add(name)
 			variables := attr.Expr.Variables()

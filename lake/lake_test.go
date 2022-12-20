@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type testFile struct {
@@ -91,7 +92,11 @@ func TestTestHCL(t *testing.T) {
 				if diags.HasErrors() {
 					return diags
 				}
-				_, diags = parseBody(pkg)
+				_, diags = parseBody(pkg, func(name string) (values map[string]Value, diags hcl.Diagnostics) {
+					return map[string]Value{
+						"fish": ValueFromCTY(cty.StringVal("carp")),
+					}, nil
+				})
 				return diags
 			}()
 			if test.ErrContains != "" {

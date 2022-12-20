@@ -33,6 +33,10 @@ type Value struct {
 	recipe *Recipe
 }
 
+func ValueFromCTY(v cty.Value) Value {
+	return Value{cty: &v}
+}
+
 func (v Value) isRecipe() bool { return v.recipe != nil }
 func (v Value) isCty() bool    { return v.cty != nil }
 
@@ -118,7 +122,6 @@ var (
 	ConfigBlockTypeName = "config"
 	StoreBlockTypeName  = "store"
 	TargetBlockTypeName = "target"
-	ImportBlockTypeName = "import"
 )
 
 var configSpec = &hcldec.TupleSpec{
@@ -139,7 +142,6 @@ var blockSpecMap = map[string]hcldec.Spec{
 	TargetBlockTypeName: recipeSpec,
 	StoreBlockTypeName:  recipeSpec,
 	ConfigBlockTypeName: configSpec,
-	ImportBlockTypeName: importSpec,
 }
 
 func parseHCLFile(path string) (file File, diags hcl.Diagnostics) {
@@ -155,10 +157,10 @@ func parseHCLFile(path string) (file File, diags hcl.Diagnostics) {
 }
 
 type File struct {
-	filename string
-	file     *hcl.File
-	content  *hcl.BodyContent
-	attrBody hcl.Body
+	filename   string
+	file       *hcl.File
+	blocks     hcl.Blocks
+	attributes hcl.Attributes
 }
 
 type Package struct {
@@ -179,11 +181,13 @@ func parseHCL(src []byte, filename string) (file File, diags hcl.Diagnostics) {
 		return File{}, diags
 	}
 	content, attrBody, diags := parseHCLBody(hclFile.Body)
+	attributes, theseDiags := attrBody.JustAttributes()
+	diags = append(diags, theseDiags...)
 	return File{
-		filename: filename,
-		file:     hclFile,
-		content:  content,
-		attrBody: attrBody,
+		filename:   filename,
+		file:       hclFile,
+		blocks:     content.Blocks,
+		attributes: attributes,
 	}, diags
 }
 
@@ -202,6 +206,9 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 			})
 		}
 	}
+	// Remove so that later on we don't get an error when parsing just attributes
+	attrBody.(*hclsyntax.Body).Blocks = nil
+
 	return content, attrBody, diags
 }
 
