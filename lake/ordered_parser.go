@@ -23,8 +23,9 @@ type toParse struct {
 type orderedParser struct {
 	graph             *dag.AcyclicGraph
 	referencesToParse map[string]toParse
-	names             map[string]hcl.Range
 	generatedStores   []Recipe
+	pkg               Package
+	nameStore         nameStore
 }
 
 func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hcl.Range) *hcl.Diagnostic {
@@ -38,18 +39,79 @@ func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hc
 		Context: context,
 	}
 }
-func newOrderedParser() *orderedParser {
+func newOrderedParser(pkg Package) *orderedParser {
 	op := &orderedParser{
 		referencesToParse: map[string]toParse{},
-		names:             map[string]hcl.Range{},
 		graph:             &dag.AcyclicGraph{},
+		nameStore:         newNameStore(pkg),
+		pkg:               pkg,
 	}
 	return op
 }
 
-func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) (diags hcl.Diagnostics) {
-	for _, content := range contents {
-		for _, block := range content.Blocks {
+type nameStore map[string]map[string]hcl.Range
+
+func newNameStore(pkg Package) nameStore {
+	ns := make(nameStore)
+
+	for _, file := range pkg.files {
+		ns[file.filename] = make(map[string]hcl.Range)
+	}
+	return ns
+}
+
+func (ns nameStore) addImport(filename, name string, block *hcl.Block) (diags hcl.Diagnostics) {
+	conflictRange, found := ns[filename][name]
+	if found {
+		diags = append(diags, errDuplicateName(
+			name,
+			conflictRange,
+			rangePointer(block.DefRange),
+			rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+		)
+		return diags
+	}
+	ns[filename][name] = block.DefRange
+	return nil
+}
+func (ns nameStore) addBlock(name string, block *hcl.Block) (diags hcl.Diagnostics) {
+	for filename, fileVars := range ns {
+		conflictRange, found := fileVars[name]
+		if found {
+			diags = append(diags, errDuplicateName(
+				name,
+				conflictRange,
+				rangePointer(block.DefRange),
+				rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+			)
+			continue
+		}
+		ns[filename][name] = block.DefRange
+	}
+	return diags
+}
+
+func (ns nameStore) addAttr(name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
+	for filename, fileVars := range ns {
+		conflictRange, found := fileVars[name]
+		if found {
+			diags = append(diags, errDuplicateName(
+				name,
+				conflictRange,
+				rangePointer(attr.Range),
+				nil,
+			))
+
+			continue
+		}
+		ns[filename][name] = attr.Range
+	}
+	return diags
+}
+
+func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
+	for _, file := range op.pkg.files {
+		for _, block := range file.content.Blocks {
 			spec, found := blockSpecMap[block.Type]
 			if !found {
 				// Blocks should be validated before reaching this function
@@ -62,20 +124,14 @@ func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) (diags hcl.Di
 				toParse := op.referencesToParse[name]
 				toParse.configs = append(toParse.configs, block)
 				op.referencesToParse[name] = toParse
+			} else if block.Type == ImportBlockTypeName {
+				// TODO: this won't work
+				diags = append(diags, op.nameStore.addImport(file.filename, block.Labels[0], block)...)
+				op.referencesToParse[block.Labels[0]] = toParse{block: block}
 			} else {
 				// Is "store" or "target"
 				name = block.Labels[0]
-				conflictRange, found := op.names[block.Labels[0]]
-				if found {
-					diags = append(diags, errDuplicateName(
-						name,
-						conflictRange,
-						rangePointer(block.DefRange),
-						rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
-					)
-					continue
-				}
-				op.names[block.Labels[0]] = block.DefRange
+				diags = append(diags, op.nameStore.addBlock(name, block)...)
 				op.referencesToParse[name] = toParse{block: block}
 			}
 
@@ -92,31 +148,20 @@ func (op *orderedParser) reviewBlocks(contents []*hcl.BodyContent) (diags hcl.Di
 	return diags
 }
 
-func (op *orderedParser) reviewAttributes(attrBodies []hcl.Body) (diags hcl.Diagnostics) {
-	for _, attrBody := range attrBodies {
+func (op *orderedParser) reviewAttributes() (diags hcl.Diagnostics) {
+	for _, file := range op.pkg.files {
 		// TODO: Confused about why this is required, docs say identified blocks are
 		// removed by Body.PartialContent
-		attrBody.(*hclsyntax.Body).Blocks = nil
+		file.attrBody.(*hclsyntax.Body).Blocks = nil
 
-		attributes, theseDiags := attrBody.JustAttributes()
+		attributes, theseDiags := file.attrBody.JustAttributes()
 		if theseDiags.HasErrors() {
 			diags = append(diags, theseDiags...)
 			continue
 		}
 		for _, attr := range attributes {
 			name := attr.Name
-			conflictRange, found := op.names[name]
-			if found {
-				diags = append(diags, errDuplicateName(
-					name,
-					conflictRange,
-					rangePointer(attr.Range),
-					nil,
-				))
-
-				continue
-			}
-			op.names[name] = attr.Range
+			diags = append(diags, op.nameStore.addAttr(name, attr)...)
 			op.graph.Add(name)
 			variables := attr.Expr.Variables()
 			op.referencesToParse[name] = toParse{attr: attr}

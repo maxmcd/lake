@@ -22,6 +22,7 @@ import (
 )
 
 type lakefile struct {
+	Imports []Import `hcl:"import,block"`
 	Configs []Config `hcl:"config,block"`
 	Stores  []Recipe `hcl:"store,block"`
 	Targets []Recipe `hcl:"target,block"`
@@ -34,6 +35,13 @@ type Value struct {
 
 func (v Value) isRecipe() bool { return v.recipe != nil }
 func (v Value) isCty() bool    { return v.cty != nil }
+
+func (v Value) toCtyValue() cty.Value {
+	if v.isCty() {
+		return *v.cty
+	}
+	return v.recipe.ctyString()
+}
 
 func (v Value) MarshalJSON() ([]byte, error) {
 	if v.isCty() {
@@ -97,6 +105,7 @@ var (
 	ConfigBlockTypeName = "config"
 	StoreBlockTypeName  = "store"
 	TargetBlockTypeName = "target"
+	ImportBlockTypeName = "import"
 )
 
 var configSpec = &hcldec.TupleSpec{
@@ -111,16 +120,19 @@ var recipeSpec = &hcldec.TupleSpec{
 	&hcldec.AttrSpec{Name: "shell", Type: cty.List(cty.String), Required: false},
 }
 
+var importSpec = &hcldec.TupleSpec{}
+
 var blockSpecMap = map[string]hcldec.Spec{
 	TargetBlockTypeName: recipeSpec,
 	StoreBlockTypeName:  recipeSpec,
 	ConfigBlockTypeName: configSpec,
+	ImportBlockTypeName: importSpec,
 }
 
-func parseHCLFile(path string) (file *hcl.File, content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
+func parseHCLFile(path string) (file File, diags hcl.Diagnostics) {
 	src, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, nil, nil, diags.Append(&hcl.Diagnostic{
+		return File{}, diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  errors.Wrapf(err, "error reading %q", path).Error(),
 		})
@@ -129,13 +141,37 @@ func parseHCLFile(path string) (file *hcl.File, content *hcl.BodyContent, attrBo
 	return parseHCL(src, filepath.Base(path))
 }
 
-func parseHCL(src []byte, filename string) (file *hcl.File, content *hcl.BodyContent, attrBody hcl.Body, diags hcl.Diagnostics) {
+type File struct {
+	filename string
+	file     *hcl.File
+	content  *hcl.BodyContent
+	attrBody hcl.Body
+}
+
+type Package struct {
+	files []File
+}
+
+func (pkg Package) FileMap() map[string]*hcl.File {
+	v := make(map[string]*hcl.File)
+	for _, file := range pkg.files {
+		v[file.filename] = file.file
+	}
+	return v
+}
+
+func parseHCL(src []byte, filename string) (file File, diags hcl.Diagnostics) {
 	hclFile, diags := hclsyntax.ParseConfig(src, filename, hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
-		return hclFile, nil, nil, diags
+		return File{}, diags
 	}
-	content, attrBody, diags = parseHCLBody(hclFile.Body)
-	return hclFile, content, attrBody, diags
+	content, attrBody, diags := parseHCLBody(hclFile.Body)
+	return File{
+		filename: filename,
+		file:     hclFile,
+		content:  content,
+		attrBody: attrBody,
+	}, diags
 }
 
 func rangePointer(r hcl.Range) *hcl.Range { return &r }
@@ -156,11 +192,11 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 	return content, attrBody, diags
 }
 
-func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (values map[string]Value, diags hcl.Diagnostics) {
-	dirParser := newOrderedParser()
+func parseBody(pkg Package) (values map[string]Value, diags hcl.Diagnostics) {
+	dirParser := newOrderedParser(pkg)
 
-	diags = append(diags, dirParser.reviewBlocks(content)...)
-	diags = append(diags, dirParser.reviewAttributes(attrBody)...)
+	diags = append(diags, dirParser.reviewBlocks()...)
+	diags = append(diags, dirParser.reviewAttributes()...)
 
 	if diags.HasErrors() {
 		return nil, diags
@@ -171,10 +207,10 @@ func parseBody(content []*hcl.BodyContent, attrBody []hcl.Body) (values map[stri
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
-func ParseDirectory(path string) (values map[string]Value, files map[string]*hcl.File, diags hcl.Diagnostics) {
+func ParseDirectory(path string) (values map[string]Value, pkg Package, diags hcl.Diagnostics) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, nil, diags.Append(&hcl.Diagnostic{
+		return nil, Package{}, diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  errors.Wrapf(err, "error attempting to read directory %q", path).Error(),
 		})
@@ -188,25 +224,20 @@ func ParseDirectory(path string) (values map[string]Value, files map[string]*hcl
 		}
 	}
 
-	files = map[string]*hcl.File{}
-	var contents []*hcl.BodyContent
-	var attrBodies []hcl.Body
 	for _, fp := range filepaths {
-		hclFile, content, attrBody, theseDiags := parseHCLFile(fp)
-		files[filepath.Base(fp)] = hclFile
+		file, theseDiags := parseHCLFile(fp)
 		if theseDiags.HasErrors() {
 			diags = diags.Extend(theseDiags)
 			continue
 		}
-		contents = append(contents, content)
-		attrBodies = append(attrBodies, attrBody)
+		pkg.files = append(pkg.files, file)
 	}
 	if diags.HasErrors() {
-		return nil, files, diags
+		return nil, pkg, diags
 	}
 
-	values, diags = parseBody(contents, attrBodies)
-	return values, files, diags
+	values, diags = parseBody(pkg)
+	return values, pkg, diags
 }
 
 // PrintDiagnostics is an opinionated use of hcl.NewDiagnosticTextWriter that

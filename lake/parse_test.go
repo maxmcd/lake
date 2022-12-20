@@ -9,9 +9,9 @@ import (
 )
 
 func TestProjectLakefile(t *testing.T) {
-	_, files, diags := ParseDirectory("../")
+	_, pkg, diags := ParseDirectory("../")
 	if diags.HasErrors() {
-		if err := PrintDiagnostics(files, diags); err != nil {
+		if err := PrintDiagnostics(pkg.FileMap(), diags); err != nil {
 			t.Fatal(err)
 		}
 		t.Fatal(diags)

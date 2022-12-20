@@ -1,6 +1,7 @@
-# import "github.com/maxmcd/lake/lib/busybox" {}
-# https://github.com/google/starlark-go/blob/master/starlark/example_test.go
+import "foo" {}
 
+
+# https://github.com/google/starlark-go/blob/master/starlark/example_test.go
 
 
 store "_busybox_tar" {
@@ -17,7 +18,7 @@ store "busybox_store" {
   # TODO: check that this file exists
   inputs = [
     _busybox_tar, "./script.sh",
-    # lib.lake_tar_gz,
+    foo,
   ]
   env = {
     FOO = "bar"

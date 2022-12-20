@@ -71,8 +71,7 @@ func TestTestHCL(t *testing.T) {
 			files := map[string]*hcl.File{}
 			diags := func() hcl.Diagnostics {
 				var diags hcl.Diagnostics
-				var contents []*hcl.BodyContent
-				var attrBodies []hcl.Body
+				var pkg Package
 				for _, body := range test.Files {
 					syntaxBody := body.Body.(*hclsyntax.Body)
 
@@ -82,18 +81,17 @@ func TestTestHCL(t *testing.T) {
 					rangeWithinBody.Start.Column = 1
 					rangeWithinBody.End.Column = 1
 
-					file, content, attrBody, theseDiags := parseHCL(hclRangeBytes(rangeWithinBody, src), body.Name)
-					files[body.Name] = file
+					file, theseDiags := parseHCL(hclRangeBytes(rangeWithinBody, src), body.Name)
+					files[body.Name] = file.file
 					if theseDiags.HasErrors() {
 						diags = diags.Extend(theseDiags)
 					}
-					contents = append(contents, content)
-					attrBodies = append(attrBodies, attrBody)
+					pkg.files = append(pkg.files, file)
 				}
 				if diags.HasErrors() {
 					return diags
 				}
-				_, diags = parseBody(contents, attrBodies)
+				_, diags = parseBody(pkg)
 				return diags
 			}()
 			if test.ErrContains != "" {
