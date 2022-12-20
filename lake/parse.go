@@ -50,6 +50,19 @@ func (v Value) MarshalJSON() ([]byte, error) {
 	return json.Marshal(*v.recipe)
 }
 
+// valueMapToCTYObject takes values exported from a package and filters out things
+// we can't import: files and names starting with underscores
+func valueMapToCTYObject(values map[string]Value) cty.Value {
+	attrTypes := map[string]cty.Value{}
+	for name, value := range values {
+		if strings.HasPrefix(name, "./") || strings.HasPrefix(name, "_") {
+			continue
+		}
+		attrTypes[name] = value.toCtyValue()
+	}
+	return cty.ObjectVal(attrTypes)
+}
+
 type Import struct {
 	Name  string `hcl:"name,label"`
 	Alias string `hcl:"alias,optional"`
@@ -192,8 +205,8 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 	return content, attrBody, diags
 }
 
-func parseBody(pkg Package, load func(string) map[string]Value) (values map[string]Value, diags hcl.Diagnostics) {
-	dirParser := newOrderedParser(pkg)
+func parseBody(pkg Package, importFunc ImportFunction) (values map[string]Value, diags hcl.Diagnostics) {
+	dirParser := newOrderedParser(pkg, importFunc)
 
 	diags = append(diags, dirParser.reviewBlocks()...)
 	diags = append(diags, dirParser.reviewAttributes()...)
@@ -207,7 +220,7 @@ func parseBody(pkg Package, load func(string) map[string]Value) (values map[stri
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
-func ParseDirectory(path string, load func(string) map[string]Value) (values map[string]Value, pkg Package, diags hcl.Diagnostics) {
+func ParseDirectory(path string, importFunc ImportFunction) (values map[string]Value, pkg Package, diags hcl.Diagnostics) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, Package{}, diags.Append(&hcl.Diagnostic{
@@ -236,7 +249,7 @@ func ParseDirectory(path string, load func(string) map[string]Value) (values map
 		return nil, pkg, diags
 	}
 
-	values, diags = parseBody(pkg)
+	values, diags = parseBody(pkg, importFunc)
 	return values, pkg, diags
 }
 

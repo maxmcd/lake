@@ -29,7 +29,7 @@ type orderedParser struct {
 	generatedStores   []Recipe
 
 	imports    map[string]map[string]Value
-	importFunc func(string) map[string]Value
+	importFunc ImportFunction
 
 	// the package we're working on
 	pkg Package
@@ -49,14 +49,28 @@ func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hc
 		Context: context,
 	}
 }
-func newOrderedParser(pkg Package) *orderedParser {
+func newOrderedParser(pkg Package, importFunc ImportFunction) *orderedParser {
 	op := &orderedParser{
 		referencesToParse: map[string]toParse{},
 		graph:             &dag.AcyclicGraph{},
 		nameStore:         newNameStore(pkg),
 		pkg:               pkg,
+		importFunc:        importFunc,
 	}
 	return op
+}
+
+func (op *orderedParser) loadOrRetrieveImport(importName string) (values map[string]Value, diags hcl.Diagnostics) {
+	values, found := op.imports[importName]
+	if found {
+		return values, nil
+	}
+	values, diags = op.importFunc(importName)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	op.imports[importName] = values
+	return values, diags
 }
 
 func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
@@ -75,9 +89,23 @@ func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 				toParse.configs = append(toParse.configs, block)
 				op.referencesToParse[name] = toParse
 			} else if block.Type == ImportBlockTypeName {
+				importName := block.Labels[0]
+				values, theseDiags := op.loadOrRetrieveImport(importName)
+				if diags.HasErrors() {
+					// Return immediately, we would likely get parse errors from
+					// variables we expect to be exported. We just show the
+					// errors we've gotten.
+					return append(diags, theseDiags...)
+				}
+
+				// ????
+				importObjValue := valueMapToCTYObject(values)
+				_ = importObjValue
+
 				// TODO: this won't work
-				diags = append(diags, op.nameStore.addImport(file.filename, block.Labels[0], block)...)
-				op.referencesToParse[block.Labels[0]] = toParse{block: block}
+				// TODO: add values to something
+				diags = append(diags, op.nameStore.addImport(file.filename, importName, block)...)
+				op.referencesToParse[importName] = toParse{block: block}
 			} else {
 				// Is "store" or "target"
 				name = block.Labels[0]
