@@ -613,3 +613,29 @@ Cons:
 - not enough context in a single file example to execute code
 
 
+
+
+```mermaid
+graph TD;
+    busybox_store --> config
+    say-hi --> config
+    ./*Lakefile --> config
+    one --> config
+    two --> config
+    build_script --> config
+    busybox_store_alt --> build_script
+    busybox_shell --> busybox_store
+    busybox --> config
+    two --> _busybox_tar
+    empty_store --> config
+    config --> _busybox_tar
+    busybox_store --> _busybox_tar
+    busybox_store --> foo
+    busybox_store_alt --> _busybox_tar
+    busybox --> busybox_store
+    busybox_shell --> _busybox_tar
+    foo --> config
+    busybox_store_alt --> config
+    busybox_shell --> config
+     --> config
+```

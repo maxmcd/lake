@@ -192,7 +192,7 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 	return content, attrBody, diags
 }
 
-func parseBody(pkg Package) (values map[string]Value, diags hcl.Diagnostics) {
+func parseBody(pkg Package, load func(string) map[string]Value) (values map[string]Value, diags hcl.Diagnostics) {
 	dirParser := newOrderedParser(pkg)
 
 	diags = append(diags, dirParser.reviewBlocks()...)
@@ -207,7 +207,7 @@ func parseBody(pkg Package) (values map[string]Value, diags hcl.Diagnostics) {
 
 // ParseDirectory takes a directory and searches it for Lakefiles. Those files
 // are parsed and the resulting data is returned.
-func ParseDirectory(path string) (values map[string]Value, pkg Package, diags hcl.Diagnostics) {
+func ParseDirectory(path string, load func(string) map[string]Value) (values map[string]Value, pkg Package, diags hcl.Diagnostics) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, Package{}, diags.Append(&hcl.Diagnostic{

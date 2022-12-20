@@ -20,12 +20,22 @@ type toParse struct {
 	configs []*hcl.Block
 }
 
+// orderedParser takes a collection of hcl blocks and attributes, parses them in
+// variable dependency order, and returns a collection of named values
 type orderedParser struct {
+	// The graph of variable references
 	graph             *dag.AcyclicGraph
 	referencesToParse map[string]toParse
 	generatedStores   []Recipe
-	pkg               Package
-	nameStore         nameStore
+
+	imports    map[string]map[string]Value
+	importFunc func(string) map[string]Value
+
+	// the package we're working on
+	pkg Package
+
+	// nameStore stores variables names for each file
+	nameStore nameStore
 }
 
 func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hcl.Range) *hcl.Diagnostic {
@@ -49,66 +59,6 @@ func newOrderedParser(pkg Package) *orderedParser {
 	return op
 }
 
-type nameStore map[string]map[string]hcl.Range
-
-func newNameStore(pkg Package) nameStore {
-	ns := make(nameStore)
-
-	for _, file := range pkg.files {
-		ns[file.filename] = make(map[string]hcl.Range)
-	}
-	return ns
-}
-
-func (ns nameStore) addImport(filename, name string, block *hcl.Block) (diags hcl.Diagnostics) {
-	conflictRange, found := ns[filename][name]
-	if found {
-		diags = append(diags, errDuplicateName(
-			name,
-			conflictRange,
-			rangePointer(block.DefRange),
-			rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
-		)
-		return diags
-	}
-	ns[filename][name] = block.DefRange
-	return nil
-}
-func (ns nameStore) addBlock(name string, block *hcl.Block) (diags hcl.Diagnostics) {
-	for filename, fileVars := range ns {
-		conflictRange, found := fileVars[name]
-		if found {
-			diags = append(diags, errDuplicateName(
-				name,
-				conflictRange,
-				rangePointer(block.DefRange),
-				rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
-			)
-			continue
-		}
-		ns[filename][name] = block.DefRange
-	}
-	return diags
-}
-
-func (ns nameStore) addAttr(name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
-	for filename, fileVars := range ns {
-		conflictRange, found := fileVars[name]
-		if found {
-			diags = append(diags, errDuplicateName(
-				name,
-				conflictRange,
-				rangePointer(attr.Range),
-				nil,
-			))
-
-			continue
-		}
-		ns[filename][name] = attr.Range
-	}
-	return diags
-}
-
 func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 	for _, file := range op.pkg.files {
 		for _, block := range file.content.Blocks {
@@ -119,7 +69,7 @@ func (op *orderedParser) reviewBlocks() (diags hcl.Diagnostics) {
 			}
 			var name string
 			if block.Type == ConfigBlockTypeName {
-				// TODO: put illegal chars in name?
+				// TODO: what if name conflicts with store or target name?
 				name = ConfigBlockTypeName
 				toParse := op.referencesToParse[name]
 				toParse.configs = append(toParse.configs, block)
@@ -213,6 +163,68 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (values map[string]Valu
 	return newWalkDecoder().walk(op.graph, op.referencesToParse)
 }
 
+type nameStore map[string]map[string]hcl.Range
+
+func newNameStore(pkg Package) nameStore {
+	ns := make(nameStore)
+
+	for _, file := range pkg.files {
+		ns[file.filename] = make(map[string]hcl.Range)
+	}
+	return ns
+}
+
+func (ns nameStore) addImport(filename, name string, block *hcl.Block) (diags hcl.Diagnostics) {
+	conflictRange, found := ns[filename][name]
+	if found {
+		diags = append(diags, errDuplicateName(
+			name,
+			conflictRange,
+			rangePointer(block.DefRange),
+			rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+		)
+		return diags
+	}
+	ns[filename][name] = block.DefRange
+	return nil
+}
+func (ns nameStore) addBlock(name string, block *hcl.Block) (diags hcl.Diagnostics) {
+	for filename, fileVars := range ns {
+		conflictRange, found := fileVars[name]
+		if found {
+			diags = append(diags, errDuplicateName(
+				name,
+				conflictRange,
+				rangePointer(block.DefRange),
+				rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
+			)
+			continue
+		}
+		ns[filename][name] = block.DefRange
+	}
+	return diags
+}
+
+func (ns nameStore) addAttr(name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
+	for filename, fileVars := range ns {
+		conflictRange, found := fileVars[name]
+		if found {
+			diags = append(diags, errDuplicateName(
+				name,
+				conflictRange,
+				rangePointer(attr.Range),
+				nil,
+			))
+
+			continue
+		}
+		ns[filename][name] = attr.Range
+	}
+	return diags
+}
+
+// walkDecoder walks the dependency tree of variable references and parses each
+// hcl block and attribute as we the values that they need to be available
 type walkDecoder struct {
 	values      map[string]Value
 	evalContext *hcl.EvalContext
@@ -268,6 +280,9 @@ func (wd *walkDecoder) walk(graph *dag.AcyclicGraph, referencesToParse map[strin
 	values map[string]Value, diags hcl.Diagnostics) {
 	insertConfigDescendants(graph, referencesToParse)
 	var lock sync.Mutex
+
+	fmt.Println(mermaidGraph(graph))
+
 	errs := graph.Walk(func(v dag.Vertex) error {
 		// Force serial for now
 		lock.Lock()
