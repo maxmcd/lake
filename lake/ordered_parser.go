@@ -44,7 +44,7 @@ func errDuplicateName(name string, conflictRange hcl.Range, subject, context *hc
 		Severity: hcl.DiagError,
 		Summary:  "Duplicate name",
 		Detail: fmt.Sprintf(
-			"The name %q has already been used at %s. Target, store, and argument names must be unique.",
+			"The name %q has already been used at %s. Target, store, import and argument names must be unique.",
 			name, conflictRange),
 		Subject: subject,
 		Context: context,
@@ -194,6 +194,13 @@ func convertInputValue(imprt *hcl.Attribute) (vals []importVal, diags hcl.Diagno
 		return nil, diags
 	}
 
+	if !value.CanIterateElements() {
+		return nil, hcl.Diagnostics{&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Import must be a list.",
+			Subject:  &imprt.Range,
+		}}
+	}
 	iterator := value.ElementIterator()
 	for iterator.Next() {
 		_, v := iterator.Element()
@@ -244,6 +251,7 @@ func (op *orderedParser) loadImports() (diags hcl.Diagnostics) {
 			continue
 		}
 		for _, val := range vals {
+			op.nameStore.addImport(file.filename, val.refName(), imprt)
 			diags = append(diags, op.loadImport(file.filename, val)...)
 		}
 	}
@@ -317,18 +325,18 @@ func newNameStore(pkg Package) nameStore {
 	return ns
 }
 
-func (ns nameStore) addImport(filename, name string, block *hcl.Block) (diags hcl.Diagnostics) {
+func (ns nameStore) addImport(filename, name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
 	conflictRange, found := ns[filename][name]
 	if found {
 		diags = append(diags, errDuplicateName(
 			name,
 			conflictRange,
-			rangePointer(block.DefRange),
-			rangePointer(block.Body.(*hclsyntax.Body).SrcRange)),
-		)
+			rangePointer(attr.Range),
+			nil,
+		))
 		return diags
 	}
-	ns[filename][name] = block.DefRange
+	ns[filename][name] = attr.Range
 	return nil
 }
 func (ns nameStore) addBlock(name string, block *hcl.Block) (diags hcl.Diagnostics) {
