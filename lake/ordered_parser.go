@@ -28,8 +28,9 @@ type orderedParser struct {
 	referencesToParse map[string]toParse
 	generatedStores   []Recipe
 
-	imports    map[string]map[string]Value
-	importFunc ImportFunction
+	imports        map[string]map[string]Value
+	perFileImports map[string]map[string]map[string]Value
+	importFunc     ImportFunction
 
 	// the package we're working on
 	pkg Package
@@ -57,17 +58,23 @@ func newOrderedParser(pkg Package, importFunc ImportFunction) *orderedParser {
 		pkg:               pkg,
 		importFunc:        importFunc,
 		imports:           map[string]map[string]Value{},
+		perFileImports:    map[string]map[string]map[string]Value{},
 	}
 	return op
 }
 
-func (op *orderedParser) loadImport(importName string) (diags hcl.Diagnostics) {
-	values, found := op.imports[importName]
+func (op *orderedParser) loadImport(filename string, iv importVal) (diags hcl.Diagnostics) {
+	if _, found := op.perFileImports[filename]; !found {
+		op.perFileImports[filename] = map[string]map[string]Value{}
+	}
+	values, found := op.imports[iv.name]
 	if found {
+		op.perFileImports[filename][iv.refName()] = values
 		return nil
 	}
-	values, diags = op.importFunc(importName)
-	op.imports[importName] = values
+	values, diags = op.importFunc(iv.name)
+	op.imports[iv.name] = values
+	op.perFileImports[filename][iv.refName()] = values
 	return diags
 }
 
@@ -122,43 +129,126 @@ func variableName(v hcl.Traversal) string {
 	return sb.String()
 }
 
+func checkForThingsAboveImport(imprt *hcl.Attribute, file File) (diags hcl.Diagnostics) {
+	importLocationErr := &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "Invalid import location",
+		Detail:   fmt.Sprintf("Import statement must be the first attribute defined in a file."),
+	}
+	importLine := imprt.Range.Start.Line
+	for _, attr := range file.attributes {
+		if attr.Name == importAttributeName {
+			continue
+		}
+		if attr.Range.Start.Line > importLine {
+			continue
+		}
+		var context *hcl.Range
+		// Show more context if it's near
+		if attr.Range.Start.Line-importLine < 10 {
+			context = &hcl.Range{
+				Filename: attr.Range.Filename,
+				Start:    attr.Range.Start,
+				End:      imprt.Range.End,
+			}
+		}
+		importLocationErr.Subject = &imprt.Range
+		importLocationErr.Context = context
+		return append(diags, importLocationErr)
+	}
+	for _, block := range file.blocks {
+		if block.DefRange.Start.Line > importLine {
+			continue
+		}
+		var context *hcl.Range
+		// Show more context if it's near
+		if block.DefRange.Start.Line-importLine < 10 {
+			context = &hcl.Range{
+				Filename: block.DefRange.Filename,
+				Start:    block.DefRange.Start,
+				End:      imprt.Range.End,
+			}
+		}
+		importLocationErr.Subject = &imprt.Range
+		importLocationErr.Context = context
+		return append(diags, importLocationErr)
+	}
+	return nil
+}
+
+type importVal struct {
+	name  string
+	alias string
+}
+
+func (iv importVal) refName() string {
+	if iv.alias != "" {
+		return iv.alias
+	}
+	return iv.name
+}
+
+func convertInputValue(imprt *hcl.Attribute) (vals []importVal, diags hcl.Diagnostics) {
+	value, theseDiags := imprt.Expr.Value(nil)
+	if diags = append(diags, theseDiags...); diags.HasErrors() {
+		return nil, diags
+	}
+
+	iterator := value.ElementIterator()
+	for iterator.Next() {
+		_, v := iterator.Element()
+		if v.Type() == cty.String {
+			vals = append(vals, importVal{name: v.AsString()})
+			continue
+		}
+		if v.LengthInt() != 1 {
+			panic(v)
+		}
+		mapIterator := v.ElementIterator()
+		for mapIterator.Next() {
+			alias, name := mapIterator.Element()
+			vals = append(vals, importVal{name: name.AsString(), alias: alias.AsString()})
+		}
+	}
+	return vals, diags
+}
+
 func (op *orderedParser) loadImports() (diags hcl.Diagnostics) {
 
+	// Range once for errors.
 	for _, file := range op.pkg.files {
-		imports, found := file.attributes[importsAttributeName]
+		imprt, found := file.attributes[importAttributeName]
 		if !found {
 			continue
 		}
-		importLine := imports.Range.Start.Line
-		for _, attr := range file.attributes {
-			attr.Range.Start.Line
+		if len(imprt.Expr.Variables()) > 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Import statement cannot contain variables.",
+				Subject:  &imprt.Range,
+			})
+		}
+		diags = append(diags, checkForThingsAboveImport(imprt, file)...)
+	}
+	if diags.HasErrors() {
+		return diags
+	}
+	// Range again for importing
+	for _, file := range op.pkg.files {
+		imprt, found := file.attributes[importAttributeName]
+		if !found {
+			continue
+		}
+		vals, theseDiags := convertInputValue(imprt)
+		if diags = append(diags, theseDiags...); theseDiags.HasErrors() {
+			continue
+		}
+		for _, val := range vals {
+			diags = append(diags, op.loadImport(file.filename, val)...)
 		}
 	}
-	// if name == importsAttributeName {
-	// 	if i != 0 {
-	// 		return hcl.Diagnostics{&hcl.Diagnostic{
-	// 			Severity: hcl.DiagError,
-	// 			Summary:  "Invalid imports",
-	// 			Detail: fmt.Sprintf(
-	// 				"Imports must be defined as the first attribute in a file.",
-	// 			),
-	// 			Subject: &attr.Range,
-	// 			Context: &attr.Range,
-	// 		}}
-	// 	}
-	// }
-	// } else if block.Type == ImportBlockTypeName {
-	// 	importName := block.Labels[0]
 
-	// 	if theseDiags := op.loadImport(importName); theseDiags.HasErrors() {
-	// 		// Return immediately, we would likely get parse errors from
-	// 		// variables we expect to be exported. We just show the
-	// 		// errors we've gotten.
-	// 		return append(diags, theseDiags...)
-	// 	}
-
-	// 	diags = append(diags, op.nameStore.addImport(file.filename, importName, block)...)
-	return nil
+	return diags
 }
 
 func (op *orderedParser) reviewAttributes() (diags hcl.Diagnostics) {
@@ -213,7 +303,7 @@ func (op *orderedParser) walkGraphAndAssembleDirectory() (values map[string]Valu
 		return nil, diags
 	}
 
-	return newWalkDecoder().walk(op.graph, op.referencesToParse)
+	return newWalkDecoder(op.perFileImports).walk(op.graph, op.referencesToParse)
 }
 
 type nameStore map[string]map[string]hcl.Range
@@ -282,15 +372,18 @@ type walkDecoder struct {
 	values      map[string]Value
 	evalContext *hcl.EvalContext
 	config      Config
+
+	imports map[string]map[string]map[string]Value
 }
 
-func newWalkDecoder() *walkDecoder {
+func newWalkDecoder(imports map[string]map[string]map[string]Value) *walkDecoder {
 	return &walkDecoder{
 		evalContext: &hcl.EvalContext{
 			Functions: nil,
 			Variables: map[string]cty.Value{},
 		},
-		values: map[string]Value{},
+		values:  map[string]Value{},
+		imports: imports,
 	}
 }
 
@@ -369,9 +462,18 @@ func (wd *walkDecoder) walk(graph *dag.AcyclicGraph, referencesToParse map[strin
 	return wd.values, diags
 }
 
+func (wd *walkDecoder) fileEvalContext(filename string) *hcl.EvalContext {
+	child := wd.evalContext.NewChild()
+	child.Variables = make(map[string]cty.Value)
+	for imprt, values := range wd.imports[filename] {
+		child.Variables[imprt] = valueMapToCTYObject(values)
+	}
+	return child
+}
+
 func (wd *walkDecoder) decodeConfig(block *hcl.Block) (diags hcl.Diagnostics) {
 	var config Config
-	if diags := gohcl.DecodeBody(block.Body, wd.evalContext, &config); diags.HasErrors() {
+	if diags := gohcl.DecodeBody(block.Body, wd.fileEvalContext(block.DefRange.Filename), &config); diags.HasErrors() {
 		return diags
 	}
 	if len(wd.config.Shell) > 0 && len(config.Shell) > 0 {
@@ -393,7 +495,7 @@ func (wd *walkDecoder) decodeConfig(block *hcl.Block) (diags hcl.Diagnostics) {
 
 func (wd *walkDecoder) decodeRecipe(name string, block *hcl.Block) (diags hcl.Diagnostics) {
 	var recipe Recipe
-	if diags := gohcl.DecodeBody(block.Body, wd.evalContext, &recipe); diags.HasErrors() {
+	if diags := gohcl.DecodeBody(block.Body, wd.fileEvalContext(block.DefRange.Filename), &recipe); diags.HasErrors() {
 		for _, diag := range diags {
 			// Add more context to error
 			diag.Context = &block.Body.(*hclsyntax.Body).SrcRange
@@ -415,7 +517,7 @@ func (wd *walkDecoder) decodeRecipe(name string, block *hcl.Block) (diags hcl.Di
 }
 
 func (wd *walkDecoder) decodeAttribute(name string, attr *hcl.Attribute) (diags hcl.Diagnostics) {
-	if wd.evalContext.Variables[name], diags = attr.Expr.Value(wd.evalContext); diags.HasErrors() {
+	if wd.evalContext.Variables[name], diags = attr.Expr.Value(wd.fileEvalContext(attr.Range.Filename)); diags.HasErrors() {
 		return diags
 	}
 	ctyVal := wd.evalContext.Variables[name]

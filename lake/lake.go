@@ -7,7 +7,7 @@ var (
 )
 
 var (
-	importsAttributeName = "imports"
+	importAttributeName = "import"
 )
 
 type ImportFunction func(name string) (values map[string]Value, diags hcl.Diagnostics)

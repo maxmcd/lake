@@ -22,7 +22,6 @@ import (
 )
 
 type lakefile struct {
-	Imports []Import `hcl:"import,block"`
 	Configs []Config `hcl:"config,block"`
 	Stores  []Recipe `hcl:"store,block"`
 	Targets []Recipe `hcl:"target,block"`
@@ -215,6 +214,12 @@ func parseHCLBody(body hcl.Body) (content *hcl.BodyContent, attrBody hcl.Body, d
 func parseBody(pkg Package, importFunc ImportFunction) (values map[string]Value, diags hcl.Diagnostics) {
 	dirParser := newOrderedParser(pkg, importFunc)
 
+	diags = append(diags, dirParser.loadImports()...)
+	if diags.HasErrors() {
+		// Import errors will likely cause a variety of irrelevant downstream
+		// errors
+		return nil, diags
+	}
 	diags = append(diags, dirParser.reviewBlocks()...)
 	diags = append(diags, dirParser.reviewAttributes()...)
 
