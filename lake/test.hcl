@@ -164,3 +164,19 @@ test "import is not a list" {
     import = "hi"
   }
 }
+
+test "import variable conflicts across files are ok" {
+  err_contains = "Import must be a list"
+  file "Lakefile" {
+    import = ["lake", "lock", "pond"]
+    store "f" {
+      imports = [lake.fish, lock.fish, pond.fish]
+    }
+  }
+  file "foo.Lakefile" {
+    store "lake" {}
+    target "lock" {}
+    pond = "pong"
+  }
+
+}
