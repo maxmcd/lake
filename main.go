@@ -8,9 +8,9 @@ import (
 )
 
 func main() {
-	directory, files, diags := lake.ParseDirectory(".")
+	directory, pkg, diags := lake.ParseDirectory(".", lake.TmpLoadLakeImport)
 	if diags.HasErrors() {
-		lake.PrintDiagnostics(files, diags)
+		lake.PrintDiagnostics(pkg.FileMap(), diags)
 		return
 	}
 

@@ -3,12 +3,17 @@ store "busybox_tar" {
   network = true
 }
 
+# TODO: validate store names contain valid characters for arguments
 store "busybox_store" {
+  # TODO: check that this file exists
   inputs = [busybox_tar, "./install.sh", ]
   shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
   script = <<EOH
     ${busybox_tar}/busybox-x86_64 sh ./install.sh
   EOH
+  # TODO: consider
+  # network = true
+  # target = "x86"
 }
 
 # Should this be allowed to work?
@@ -26,11 +31,20 @@ target "busybox" {
   EOH
 }
 
-# This is weirdly legal? Would expand to be the target in a recipe?
+# This is weirdly legal? Would expand to be the target in a recipe? Can this
+# also be invoked from the command line?
 ls = "${busybox} ls"
+
+# Does that mean all variables will be attempted to be invoked as commands? That
+# seems less ideal.
+fish = ["head", "body", "fins", "tail"]
 
 # Also legal!?
 mkdir = "${busybox_store}/bin/busybox mkdir"
+
+# This makes auditing unused vars somewhat hard because we can just assume
+# things might be used as commands. A string without references isn't a target.
+# A non-string var is not a target.
 
 # Jesus can you use a target as a shell?
 shell = [busybox]

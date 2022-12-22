@@ -1,6 +1,7 @@
 <h1>Lake</h1>
 
 - [Overview](#overview)
+  - [Syntax and Structure](#syntax-and-structure)
 - [Basic Example of Functionality](#basic-example-of-functionality)
 - [Stories](#stories)
   - [Use a target as a command](#use-a-target-as-a-command)
@@ -22,7 +23,12 @@
 
 ## Overview
 
-Lake is a build system. Builds are defined using files named `Lakefile` or with
+Lake is a build system that intends to provide hermetic, reproducible builds across many languages, operating systems and architectures.
+
+
+### Syntax and Structure
+
+Lake builds are defined using files named `Lakefile` or with
 the extension `.Lakefile`. A directory containing lakefiles represents a single
 package. A namespace is shared across files within a directory (like
 Go/terraform).
@@ -47,7 +53,7 @@ Rough notes on some goals and features:
 - Write scripts to add files to a "store"
 - File generation a first class pattern (like make)
 - Build docker images
-- Allow mounting of a cache directory within a store builds
+- Allow mounting of a cache directory within a store build
 - Compile a Go program and pull dependencies without the network
 - Store dependencies and hashes/lock data
 - Import other lake files and manage many lake files in many folders within one project
@@ -588,12 +594,16 @@ And then in the Lakefile, imports are just:
 
 ```hcl
 import "lake/lib/busybox" {}
-import "boat" {}
+import "boat" { alias = "other_name" }
 # or?
 imports {
   busybox = "lake/lib/busybox"
   boat = "boat"
+  b2 = "boat_v2"
 }
+
+# or this!
+imports = ["foo", {boat = "bat"}]
 ```
 
 Pros:
@@ -607,3 +617,29 @@ Cons:
 - not enough context in a single file example to execute code
 
 
+
+
+```mermaid
+graph TD;
+    busybox_store --> config
+    say-hi --> config
+    ./*Lakefile --> config
+    one --> config
+    two --> config
+    build_script --> config
+    busybox_store_alt --> build_script
+    busybox_shell --> busybox_store
+    busybox --> config
+    two --> _busybox_tar
+    empty_store --> config
+    config --> _busybox_tar
+    busybox_store --> _busybox_tar
+    busybox_store --> foo
+    busybox_store_alt --> _busybox_tar
+    busybox --> busybox_store
+    busybox_shell --> _busybox_tar
+    foo --> config
+    busybox_store_alt --> config
+    busybox_shell --> config
+     --> config
+```

@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type testFile struct {
@@ -71,8 +72,7 @@ func TestTestHCL(t *testing.T) {
 			files := map[string]*hcl.File{}
 			diags := func() hcl.Diagnostics {
 				var diags hcl.Diagnostics
-				var contents []*hcl.BodyContent
-				var attrBodies []hcl.Body
+				var pkg Package
 				for _, body := range test.Files {
 					syntaxBody := body.Body.(*hclsyntax.Body)
 
@@ -82,18 +82,29 @@ func TestTestHCL(t *testing.T) {
 					rangeWithinBody.Start.Column = 1
 					rangeWithinBody.End.Column = 1
 
-					file, content, attrBody, theseDiags := parseHCL(hclRangeBytes(rangeWithinBody, src), body.Name)
-					files[body.Name] = file
+					file, theseDiags := parseHCL(hclRangeBytes(rangeWithinBody, src), body.Name)
+					files[body.Name] = file.file
 					if theseDiags.HasErrors() {
 						diags = diags.Extend(theseDiags)
 					}
-					contents = append(contents, content)
-					attrBodies = append(attrBodies, attrBody)
+					pkg.files = append(pkg.files, file)
 				}
 				if diags.HasErrors() {
 					return diags
 				}
-				_, diags = parseBody(contents, attrBodies)
+				_, diags = parseBody(pkg, func(name string) (values map[string]Value, diags hcl.Diagnostics) {
+					return map[string]Value{
+						"fish": ValueFromCTY(cty.StringVal("carp")),
+						"wave": ValueFromRecipe(Recipe{
+							Env: map[string]string{
+								"fetch_url": "true",
+								"url":       "http://lake.com/busybox.tar.gz",
+							},
+							IsStore: true,
+							Network: true,
+						}),
+					}, nil
+				})
 				return diags
 			}()
 			if test.ErrContains != "" {

@@ -1,7 +1,11 @@
+import = [
+  "lake/lib/busybox",
+]
+
+
 target "busybox_shell" {
-  inputs = [busybox_store]
   script = <<EOH
-    #!${_busybox_tar}/bin/busybox sh
+    #!${busybox.busybox_tar}/bin/busybox sh
     export PATH=$busybox_store/bin/
     sh $@
   EOH

@@ -1,59 +1,14 @@
-# import "github.com/maxmcd/lake/lib/busybox" {}
-# https://github.com/google/starlark-go/blob/master/starlark/example_test.go
+import = [
+  "lake/lib/busybox",
+]
 
-
-
-store "_busybox_tar" {
-  env     = { fetch_url = "true", url = "http://lake.com/busybox.tar.gz" }
-  network = true
-}
 
 config {
   # Shell? Builder? Interpreter? Command?
-  shell = ["${_busybox_tar}/bin/busybox", "sh"]
+  shell = busybox.shell
 }
 
-store "busybox_store" {
-  # TODO: check that this file exists
-  inputs = [
-    _busybox_tar, "./script.sh",
-    # lib.lake_tar_gz,
-  ]
-  env = {
-    FOO = "bar"
-  }
-  # TODO: consider
-  # network = true
-  # target = "x86"
-  script = <<EOH
-    #!${_busybox_tar}/bin/busybox sh
-    sh ./script.sh
-  EOH
-}
-
-
-build_script = "./script.sh"
-
-# TODO: validate store names contain valid characters for arguments
-store "busybox_store_alt" {
-  inputs = [_busybox_tar, build_script]
-  shell  = ["${_busybox_tar}/bin/busybox", "sh"]
-  script = "sh ./script.sh"
-}
-
-target "busybox" {
-  inputs = [busybox_store]
-  script = <<EOH
-    #!${busybox_store}/bin/busybox sh
-    $busybox_store $@
-  EOH
-}
-
-# Are tests a thing?
-# test "ensure it runs" {
-#
-# }
-
+target "hello" { script = "echo 'hello $1'" }
 
 # Do self references work? Doesn't this loop infinitely? How do wildcard matches
 # work with various identifier names? Like what if I have another target called

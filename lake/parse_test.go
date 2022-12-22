@@ -9,9 +9,9 @@ import (
 )
 
 func TestProjectLakefile(t *testing.T) {
-	_, files, diags := ParseDirectory("../")
+	_, pkg, diags := ParseDirectory("../", TmpLoadLakeImport)
 	if diags.HasErrors() {
-		if err := PrintDiagnostics(files, diags); err != nil {
+		if err := PrintDiagnostics(pkg.FileMap(), diags); err != nil {
 			t.Fatal(err)
 		}
 		t.Fatal(diags)
@@ -27,7 +27,7 @@ func TestConfirmSchemaMatch(t *testing.T) {
 		assert.Equal(t, schema, hcldec.ImpliedSchema(recipeSpec))
 	}
 	{
-		schema, _ := gohcl.ImpliedBodySchema(Config{})
+		schema, _ := gohcl.ImpliedBodySchema(config{})
 		assert.Equal(t, schema, hcldec.ImpliedSchema(configSpec))
 	}
 }

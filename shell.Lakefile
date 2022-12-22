@@ -1,3 +1,6 @@
+import = [
+  "lake/lib/busybox",
+]
 
 
 # How does shell work?
@@ -16,7 +19,7 @@ store "one" {
 
 # I can override?
 store "two" {
-  shell  = ["${_busybox_tar}/bin/busybox", "bash", "-c"]
+  shell  = ["${busybox.busybox_tar}/bin/busybox", "bash", "-c"]
   inputs = ["./script.sh"]
   script = "./script.sh"
 }

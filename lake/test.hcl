@@ -25,7 +25,6 @@ test "store and target name conflict" {
   }
 }
 
-
 test "weird block type" {
   err_contains = "unexpected block type"
   file "Lakefile" {
@@ -83,7 +82,6 @@ test "conflicting config" {
   }
 }
 
-
 test "store target circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
@@ -102,7 +100,6 @@ test "store target circular reference" {
   }
 }
 
-
 test "argument circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
@@ -116,13 +113,68 @@ test "mixed argument store target circular reference" {
   err_contains = "Circular reference"
   file "Lakefile" {
     a = c
-    target "b" {
-      inputs = [a]
-      script = ""
+    target "b" { inputs = [a] }
+    store "c" { inputs = [b] }
+  }
+}
+
+test "import name conflicts with local variable" {
+  err_contains = "Duplicate name"
+  file "Lakefile" {
+    import = ["b"]
+    target "b" {}
+  }
+}
+
+test "import name alias conflicts with local variable" {
+  err_contains = "Duplicate name"
+  file "Lakefile" {
+    import = ["b", { f = "m" }]
+    target "f" {}
+  }
+}
+
+test "import is not at the top of the file, block is" {
+  err_contains = "Invalid import location"
+  file "Lakefile" {
+    target "b" {}
+    import = ["hi"]
+  }
+}
+
+test "import is not at the top of the file, attribute is" {
+  err_contains = "Invalid import location"
+  file "Lakefile" {
+    b      = "oh"
+    import = ["hi"]
+  }
+}
+
+test "no vars in import statement" {
+  err_contains = "cannot contain variables"
+  file "Lakefile" {
+    import = ["hi", "${b}"]
+    b      = "oh"
+  }
+}
+
+test "import is not a list" {
+  err_contains = "Import must be a list"
+  file "Lakefile" {
+    import = "hi"
+  }
+}
+
+test "import variable conflicts across files are ok" {
+  file "Lakefile" {
+    import = ["lake", "scotland/lock", { puddle = "mountain/pond" }]
+    store "f" {
+      inputs = [lake.fish, lock.fish, puddle.fish]
     }
-    store "c" {
-      inputs = [b]
-      script = ""
-    }
+  }
+  file "foo.Lakefile" {
+    store "lake" {}
+    target "lock" {}
+    puddle = "pond"
   }
 }
