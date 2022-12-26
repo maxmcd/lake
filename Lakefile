@@ -1,38 +1,13 @@
-import = [
-  { bb = "lake/lib/busybox" },
-]
+busybox = import("lake/lib/busybox")
 
-
-config {
+defaults {
   # Shell? Builder? Interpreter? Command
-  shell = bb.shell
+  shell = busybox.shell
 }
 
-target "hello" { script = "echo 'hello $1'" }
+command "hello" { script = "echo 'hello $1'" }
 
-# Do self references work? Doesn't this loop infinitely? How do wildcard matches
-# work with various identifier names? Like what if I have another target called
-# "./other.Lakefile"?
-#
-# fwiw Make doesn't allow this, how do we do modification of existing files?
-# just as target commands?
-#
-# TODO: disallow globs and circular references (if we figure out how to add them
-# we can do it later)
-target format_everything {
-  inputs = ["*.go"]
-  script = <<EOH
-  nomad fmt .
-  EOH
-}
-
-
-import = [
-  "lake/lib/busybox",
-]
-
-
-target "busybox_shell" {
+command "busybox_shell" {
   script = <<EOH
     #!${busybox.busybox_tar}/bin/busybox sh
     export PATH=$busybox_store/bin/
@@ -48,20 +23,6 @@ store "empty_store" {
 }
 
 
-import = [
-  "lake/lib/busybox",
-]
-
-
-# How does shell work?
-
-# Can be defined globally?
-# config {
-#   shell = ["${busybox_tar}/bin/busybox", "sh", "-c"]
-# }
-
-# And then I can just run scripts?
-# Is busybox_tar now an inferred dependency?
 store "one" {
   inputs = ["./script.sh"]
   script = "./script.sh"
@@ -74,11 +35,33 @@ store "two" {
   script = "./script.sh"
 }
 
+
+hi = "hi"
 # Look how minimal?
-target "say-hi" { script = "echo hi" }
-
-# A shell might have environment variables or other metadata, we assume that the
-# builder of the shell will add these things as hacks? Or do we allow shells to
-# be configured?
+command "say-hi" { script = "echo ${hi}" }
 
 
+
+# Do self references work? Doesn't this loop infinitely? How do wildcard matches
+# work with various identifier names? Like what if I have another target called
+# "./other.Lakefile"?
+#
+# fwiw Make doesn't allow this, how do we do modification of existing files?
+# just as target commands?
+#
+# TODO: disallow globs and circular references (if we figure out how to add them
+# we can do it later)
+command "format_everything" {
+  inputs = ["*.go"]
+  script = <<EOH
+  nomad fmt .
+  EOH
+}
+
+
+for_expr         = [for o in busybox.shell : o]
+splat_expr       = busybox.shell[*]
+conditional_expr = true ? busybox.shell : busybox.shell
+
+# unimplemented
+# template_expr    = "Hello, %{if busybox.busybox != ""}${busybox.busybox}%{else}unnamed%{endif}!"
