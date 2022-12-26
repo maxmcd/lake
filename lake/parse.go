@@ -269,6 +269,8 @@ func PrintDiagnostics(files map[string]*hcl.File, diags hcl.Diagnostics) error {
 	color := os.Getenv("NO_COLOR") == ""
 	width, _, err := terminal.GetSize(int(os.Stdin.Fd()))
 	if err != nil {
+		// is this the right assumption? should we let the terminal handle
+		// wrapping and set this to an arbitrarily large val?
 		width = 80
 		color = false // assume we don't have a terminal
 	}

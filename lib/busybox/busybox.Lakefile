@@ -22,18 +22,42 @@ store "busybox_store" {
 #   shell  = ["${busybox_tar}/busybox-x86_64", "sh", "./install.sh"]
 # }
 
-target "busybox" {
+command "busybox" {
   shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
   inputs = [busybox_store]
   script = <<EOH
   PATH=$PATH:$busybox_store/bin
-  busybox sh $@
+  sh $@
+  EOH
+}
+
+command "busybox" {
+
+}
+
+
+
+file "./bbcopy" {
+  inputs = [busybox_store]
+  script = "cp ${busybox_store} ./bbcopy"
+}
+
+file "./happy-xianny.txt" {
+  inputs = ["./xianny.txt", busybox] // [{ file="xianny.txt"}, busybox ]
+  script = <<EOH
+    echo "$(cat ./xianny.txt) is happy" > happy-xianny.txt
   EOH
 }
 
 # This is weirdly legal? Would expand to be the target in a recipe? Can this
 # also be invoked from the command line?
 ls = "${busybox} ls"
+
+echo = "${busybox} echo"
+
+store "xianny" {
+  script = "${echo} xianny > $out/xianny.txt"
+}
 
 # Does that mean all variables will be attempted to be invoked as commands? That
 # seems less ideal.
@@ -48,3 +72,4 @@ mkdir = "${busybox_store}/bin/busybox mkdir"
 
 # Jesus can you use a target as a shell?
 shell = [busybox]
+

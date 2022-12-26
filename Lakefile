@@ -1,11 +1,11 @@
 import = [
-  "lake/lib/busybox",
+  { bb = "lake/lib/busybox" },
 ]
 
 
 config {
-  # Shell? Builder? Interpreter? Command?
-  shell = busybox.shell
+  # Shell? Builder? Interpreter? Command
+  shell = bb.shell
 }
 
 target "hello" { script = "echo 'hello $1'" }
@@ -19,9 +19,66 @@ target "hello" { script = "echo 'hello $1'" }
 #
 # TODO: disallow globs and circular references (if we figure out how to add them
 # we can do it later)
-target "./*Lakefile" {
-  inputs = ["./*Lakefile"]
+target format_everything {
+  inputs = ["*.go"]
   script = <<EOH
   nomad fmt .
   EOH
 }
+
+
+import = [
+  "lake/lib/busybox",
+]
+
+
+target "busybox_shell" {
+  script = <<EOH
+    #!${busybox.busybox_tar}/bin/busybox sh
+    export PATH=$busybox_store/bin/
+    sh $@
+  EOH
+}
+
+store "empty_store" {
+  inputs = []
+  script = <<EOH
+    sh ./script.sh
+  EOH
+}
+
+
+import = [
+  "lake/lib/busybox",
+]
+
+
+# How does shell work?
+
+# Can be defined globally?
+# config {
+#   shell = ["${busybox_tar}/bin/busybox", "sh", "-c"]
+# }
+
+# And then I can just run scripts?
+# Is busybox_tar now an inferred dependency?
+store "one" {
+  inputs = ["./script.sh"]
+  script = "./script.sh"
+}
+
+# I can override?
+store "two" {
+  shell  = ["${busybox.busybox_tar}/bin/busybox", "bash", "-c"]
+  inputs = ["./script.sh"]
+  script = "./script.sh"
+}
+
+# Look how minimal?
+target "say-hi" { script = "echo hi" }
+
+# A shell might have environment variables or other metadata, we assume that the
+# builder of the shell will add these things as hacks? Or do we allow shells to
+# be configured?
+
+
