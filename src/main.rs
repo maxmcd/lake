@@ -1,5 +1,4 @@
 use daggy;
-use daggy::petgraph::visit::IntoEdgesDirected;
 use daggy::{
     petgraph,
     petgraph::dot::{Config, Dot},
@@ -55,26 +54,9 @@ fn parse_body(body: hcl::Body) -> Result<()> {
             return Err(validation_error(format!("Found duplicate name {name}")));
         }
         name_set.insert(name.clone());
-        dag.add(name, variables);
+        dag.add(name, variables)?;
     }
-    // let edge_graph = dag.dag.map(|_, _| (), |_, edge| edge.clone());
     println!("{:?}", Dot::with_config(&dag.dag, &[Config::EdgeNoLabel]));
-    for index in 0..dag.dag.node_count() {
-        println!("{:?}", index);
-        for child in dag
-            .dag
-            .edges_directed(NodeIndex::new(index), petgraph::Direction::Outgoing)
-        {
-            println!("\tOUT{:?}", child);
-        }
-
-        for child in dag
-            .dag
-            .neighbors_directed(NodeIndex::new(index), petgraph::Direction::Incoming)
-        {
-            println!("\tIN{:?}", child);
-        }
-    }
 
     dag.walk(|thing| println!("{thing}"));
 
@@ -93,12 +75,13 @@ impl UniqueDag {
             node_indexes: HashMap::new(),
         }
     }
-    fn add(&mut self, name: String, variables: Vec<String>) {
+    fn add(&mut self, name: String, variables: Vec<String>) -> Result<()> {
         let name_idx = self.add_node(name);
         for var in variables {
             let var_idx = self.add_node(var);
-            self.dag.add_edge(var_idx, name_idx, ()).unwrap();
+            self.dag.add_edge(var_idx, name_idx, ())?;
         }
+        Ok(())
     }
 
     fn add_node(&mut self, val: String) -> NodeIndex {
@@ -119,44 +102,69 @@ impl UniqueDag {
             .neighbors_directed(next, petgraph::Direction::Outgoing)
     }
 
-    fn walk<F>(&mut self, f: F)
+    fn walk<F>(&mut self, callback: F)
     where
         F: Fn(&String),
     {
-        let mut completed: HashSet<NodeIndex> = HashSet::new();
+        // let sorted = petgraph::algo::toposort(&self.dag, None).unwrap();
+        // println!("{:?}", sorted);
+        let node_count = self.dag.node_count();
 
-        let mut queue: VecDeque<NodeIndex> = (0..self.dag.node_count())
-            // Reverse for now to just confirm this all works, default
-            // insertion order will walk in the correct oder
-            .rev()
-            .map(|i| NodeIndex::new(i))
-            .collect();
+        // Vec with parents of each node. We also use this to track if we've
+        // processed a node. We delete the parents once we've visited the
+        // corresponding node.
+        let mut parents: Vec<Option<Vec<NodeIndex>>> = Vec::with_capacity(node_count);
+
+        // Queue for nodes to process
+        let mut queue: VecDeque<NodeIndex> = VecDeque::with_capacity(node_count);
+
+        for i in 0..node_count {
+            let idx = NodeIndex::new(i);
+            let node_parents: Vec<NodeIndex> = self.parents(idx).collect();
+            parents.push(Some(node_parents));
+            queue.push_back(idx);
+        }
+        queue = {
+            // Reverse queue
+            let mut v: Vec<NodeIndex> = queue.into();
+            v.reverse();
+            v.into()
+        };
 
         while !queue.is_empty() {
             // Get next node
             let next = queue.pop_front().unwrap();
 
-            let all_parents_are_complete = self
-                .parents(next)
-                // Check if each parent is complete, if so we can proceed
-                .map(|parent| -> bool { completed.contains(&parent) })
-                .all(|b| b);
-
-            if !all_parents_are_complete {
+            // Skip if it's complete
+            if parents[next.index()].is_none() {
                 continue;
             }
 
-            // If all parents are complete, run the callback with the node value
+            // Check if each parent is complete, if so we can proceed
+            let all_parents_are_complete = parents[next.index()]
+                .as_ref()
+                .unwrap()
+                .into_iter()
+                .map(|parent| -> bool { parents[parent.index()].is_none() })
+                .all(|b| b);
+
+            if !all_parents_are_complete {
+                println!("Skipping {:?}", next);
+                continue;
+            }
+
+            // If all parents are complete, run the callback with the node value.
             let node_value = self.dag.node_weight(next).unwrap();
-            f(&node_value);
+            callback(&node_value);
 
-            // Mark node as complete
-            completed.insert(next);
+            // Mark node as complete.
+            parents[next.index()] = None;
 
-            // Stick any children we might have skipped back on the queue, maybe
-            // they can be processed now
-            let mut children: VecDeque<NodeIndex> = self.children(next).collect();
-            queue.append(&mut children);
+            // Stick any not completed children we might have skipped back on
+            // the queue. Maybe they can be processed now.
+            for child in self.children(next) {
+                queue.push_back(child);
+            }
         }
     }
 }

@@ -58,6 +58,12 @@ store "one" {
   script = "./script.sh"
 }
 
+# uncomment to confirm circular dependency checking
+# a = c
+# b = a
+# c = b
+
+
 # I can override?
 store "two" {
   shell  = ["${busybox_tar}/bin/busybox", "bash", "-c"]
