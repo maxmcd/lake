@@ -17,6 +17,7 @@
   - [Use a negative glob pattern to exclude files?](#use-a-negative-glob-pattern-to-exclude-files)
   - [Use the network](#use-the-network)
   - [Use a cache directory](#use-a-cache-directory)
+  - [Publishing and import access](#publishing-and-import-access)
 - [Internals](#internals)
   - [Simple parse and build example](#simple-parse-and-build-example)
   - [Imports and product structure](#imports-and-product-structure)
@@ -473,6 +474,49 @@ store "go_binary" {
     go build -o $out/bin/thing
   EOH
 }
+```
+
+### Publishing and import access
+
+Ideas:
+
+```hcl
+command "private" {}
+command "public" {}
+```
+
+```hcl
+command "private" {}
+command "pub" "public" {}
+# attributes?f
+```
+
+```hcl
+command "private" {}
+command_pub "public" {}
+```
+
+```hcl
+command "private" {}
+command "public" {}
+exports {
+  public = public
+}
+```
+
+```hcl
+command "private" {}
+command "Public" {}
+```
+
+```hcl
+command "private" {}
+command "public" {}
+```
+
+```hcl
+command "_private" {}
+command "public" {}
 ```
 
 

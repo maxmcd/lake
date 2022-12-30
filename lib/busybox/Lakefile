@@ -22,18 +22,42 @@ store "busybox_store" {
 #   shell  = ["${busybox_tar}/busybox-x86_64", "sh", "./install.sh"]
 # }
 
-target "busybox" {
+command "busybox" {
   shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
   inputs = [busybox_store]
   script = <<EOH
   PATH=$PATH:$busybox_store/bin
-  busybox sh $@
+  sh $@
+  EOH
+}
+
+command "busybox" {
+
+}
+
+
+
+file "./bbcopy" {
+  inputs = [busybox_store]
+  script = "cp ${busybox_store} ./bbcopy"
+}
+
+file "./happy-xianny.txt" {
+  inputs = ["./xianny.txt", busybox] // [{ file="xianny.txt"}, busybox ]
+  script = <<EOH
+    echo "$(cat ./xianny.txt) is happy" > happy-xianny.txt
   EOH
 }
 
 # This is weirdly legal? Would expand to be the target in a recipe? Can this
 # also be invoked from the command line?
 ls = "${busybox} ls"
+
+echo = "${busybox} echo"
+
+store "xianny" {
+  script = "${echo} xianny > $out/xianny.txt"
+}
 
 # Does that mean all variables will be attempted to be invoked as commands? That
 # seems less ideal.
@@ -48,3 +72,21 @@ mkdir = "${busybox_store}/bin/busybox mkdir"
 
 # Jesus can you use a target as a shell?
 shell = [busybox]
+
+
+
+# Do self references work? Doesn't this loop infinitely? How do wildcard matches
+# work with various identifier names? Like what if I have another target called
+# "./other.Lakefile"?
+#
+# fwiw Make doesn't allow this, how do we do modification of existing files?
+# just as target commands?
+#
+# TODO: disallow globs and circular references (if we figure out how to add them
+# we can do it later)
+file "./*.go" {
+  inputs = ["./*.go"]
+  script = <<EOH
+  nomad fmt .
+  EOH
+}
