@@ -2,12 +2,11 @@ use daggy;
 use daggy::{
     petgraph,
     petgraph::dot::{Config, Dot},
-    petgraph::visit::IntoNeighborsDirected,
     Dag, NodeIndex,
 };
 use hcl;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     error::Error,
     fmt,
     fs::File,
@@ -22,10 +21,6 @@ fn main() -> Result<()> {
     let body: hcl::Body = hcl::from_reader(f)?;
     println!("{:?}", body);
     parse_body(body)?;
-    // let obj = val.as_object().unwrap();
-    // for (k, v) in obj {
-    //     println!("{:?} => {:?}", k, v);
-    // }
     Ok(())
 }
 
@@ -79,6 +74,7 @@ impl UniqueDag {
         let name_idx = self.add_node(name);
         for var in variables {
             let var_idx = self.add_node(var);
+            // TODO: better error?
             self.dag.add_edge(var_idx, name_idx, ())?;
         }
         Ok(())
@@ -93,78 +89,14 @@ impl UniqueDag {
             idx
         }
     }
-    fn parents(&mut self, next: NodeIndex) -> petgraph::graph::Neighbors<()> {
-        self.dag
-            .neighbors_directed(next, petgraph::Direction::Incoming)
-    }
-    fn children(&mut self, next: NodeIndex) -> petgraph::graph::Neighbors<()> {
-        self.dag
-            .neighbors_directed(next, petgraph::Direction::Outgoing)
-    }
 
     fn walk<F>(&mut self, callback: F)
     where
         F: Fn(&String),
     {
-        // let sorted = petgraph::algo::toposort(&self.dag, None).unwrap();
-        // println!("{:?}", sorted);
-        let node_count = self.dag.node_count();
-
-        // Vec with parents of each node. We also use this to track if we've
-        // processed a node. We delete the parents once we've visited the
-        // corresponding node.
-        let mut parents: Vec<Option<Vec<NodeIndex>>> = Vec::with_capacity(node_count);
-
-        // Queue for nodes to process
-        let mut queue: VecDeque<NodeIndex> = VecDeque::with_capacity(node_count);
-
-        for i in 0..node_count {
-            let idx = NodeIndex::new(i);
-            let node_parents: Vec<NodeIndex> = self.parents(idx).collect();
-            parents.push(Some(node_parents));
-            queue.push_back(idx);
-        }
-        queue = {
-            // Reverse queue
-            let mut v: Vec<NodeIndex> = queue.into();
-            v.reverse();
-            v.into()
-        };
-
-        while !queue.is_empty() {
-            // Get next node
-            let next = queue.pop_front().unwrap();
-
-            // Skip if it's complete
-            if parents[next.index()].is_none() {
-                continue;
-            }
-
-            // Check if each parent is complete, if so we can proceed
-            let all_parents_are_complete = parents[next.index()]
-                .as_ref()
-                .unwrap()
-                .into_iter()
-                .map(|parent| -> bool { parents[parent.index()].is_none() })
-                .all(|b| b);
-
-            if !all_parents_are_complete {
-                println!("Skipping {:?}", next);
-                continue;
-            }
-
-            // If all parents are complete, run the callback with the node value.
-            let node_value = self.dag.node_weight(next).unwrap();
+        for idx in petgraph::algo::toposort(&self.dag, None).unwrap() {
+            let node_value = self.dag.node_weight(idx).unwrap();
             callback(&node_value);
-
-            // Mark node as complete.
-            parents[next.index()] = None;
-
-            // Stick any not completed children we might have skipped back on
-            // the queue. Maybe they can be processed now.
-            for child in self.children(next) {
-                queue.push_back(child);
-            }
         }
     }
 }

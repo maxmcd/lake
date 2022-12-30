@@ -25,7 +25,8 @@ test "store and target name conflict" {
   }
 }
 
-test "weird block type" {
+
+test "basic out of order references" {
   err_contains = "unexpected block type"
   file "Lakefile" {
     unexpected "empty_store" {}
@@ -35,9 +36,10 @@ test "weird block type" {
 test "basic functionality" {
   file "Lakefile" {
 
-    defaults {
-      shell = ["${busybox_tar}/bin/busybox", "sh"]
-    }
+    # Remove for now?
+    # defaults {
+    #   shell = ["${busybox_tar}/bin/busybox", "sh"]
+    # }
 
     store "busybox_tar" {
       env = {
@@ -46,8 +48,10 @@ test "basic functionality" {
       }
       network = true
     }
+
     target "busybox" {
       inputs = [busybox_store]
+      shell  = ["${busybox_tar}/bin/busybox", "sh"]
       script = <<EOH
         #!${busybox_store}/bin/busybox sh
         $busybox_store $@
@@ -58,6 +62,7 @@ test "basic functionality" {
     bar = "${ba}r"
     store "busybox_store" {
       inputs = [busybox_tar, "./script.sh"]
+      shell  = ["${busybox_tar}/bin/busybox", "sh"]
       env = {
         FOO = bar
       }
@@ -69,17 +74,18 @@ test "basic functionality" {
   }
 }
 
-test "conflicting defaults" {
-  err_contains = "Conflicting defaults"
-  file "Lakefile" {
-    defaults {
-      shell = ["/bin/busybox", "sh"]
-    }
-    defaults {
-      shell = ["/bin/busybox", "sh"]
-    }
-  }
-}
+# Remove for now?
+# test "conflicting defaults" {
+#   err_contains = "Conflicting defaults"
+#   file "Lakefile" {
+#     defaults {
+#       shell = ["/bin/busybox", "sh"]
+#     }
+#     defaults {
+#       shell = ["/bin/busybox", "sh"]
+#     }
+#   }
+# }
 
 test "store comand circular reference" {
   err_contains = "Circular reference"
