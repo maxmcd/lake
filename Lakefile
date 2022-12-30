@@ -1,15 +1,45 @@
-busybox = import("lake/lib/busybox")
+# busybox = import("lake/lib/busybox")
+
+
+store "busybox_tar" {
+  env     = { fetch_url = "true", url = "https://brmbl.s3.amazonaws.com/busybox-x86_64.tar.gz" }
+  network = true
+}
+
+store "busybox_store" {
+  inputs = ["./install.sh", ]
+  shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
+  script = <<EOH
+    ${busybox_tar}/busybox-x86_64 sh ./install.sh
+  EOH
+}
+
+
+
+
+command "busybox" {
+  shell  = ["${busybox_tar}/busybox-x86_64", "sh"]
+  inputs = [busybox_store]
+  script = <<EOH
+  PATH=$PATH:$busybox_store/bin
+  sh $@
+  EOH
+}
+
+
+shell = [busybox]
+
 
 defaults {
   # Shell? Builder? Interpreter? Command
-  shell = busybox.shell
+  shell = shell
 }
 
 command "hello" { script = "echo 'hello $1'" }
 
 command "busybox_shell" {
   script = <<EOH
-    #!${busybox.busybox_tar}/bin/busybox sh
+    #!${busybox_tar}/bin/busybox sh
     export PATH=$busybox_store/bin/
     sh $@
   EOH
@@ -30,38 +60,25 @@ store "one" {
 
 # I can override?
 store "two" {
-  shell  = ["${busybox.busybox_tar}/bin/busybox", "bash", "-c"]
+  shell  = ["${busybox_tar}/bin/busybox", "bash", "-c"]
   inputs = ["./script.sh"]
   script = "./script.sh"
 }
-
 
 hi = "hi"
 # Look how minimal?
 command "say-hi" { script = "echo ${hi}" }
 
-
-
-# Do self references work? Doesn't this loop infinitely? How do wildcard matches
-# work with various identifier names? Like what if I have another target called
-# "./other.Lakefile"?
-#
-# fwiw Make doesn't allow this, how do we do modification of existing files?
-# just as target commands?
-#
-# TODO: disallow globs and circular references (if we figure out how to add them
-# we can do it later)
-command "format_everything" {
-  inputs = ["*.go"]
-  script = <<EOH
-  nomad fmt .
-  EOH
+command "say-hi-explicit-shell" {
+  shell  = [shell]
+  script = "echo ${hi}"
 }
 
 
-for_expr         = [for o in busybox.shell : o]
-splat_expr       = busybox.shell[*]
-conditional_expr = true ? busybox.shell : busybox.shell
+# These are just for validating various rust things
+for_expr         = [for o in shell : o]
+splat_expr       = shell[*]
+conditional_expr = true ? shell : shell
 
 # unimplemented
 # template_expr    = "Hello, %{if busybox.busybox != ""}${busybox.busybox}%{else}unnamed%{endif}!"

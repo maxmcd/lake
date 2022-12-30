@@ -1,14 +1,253 @@
+use daggy;
+use daggy::petgraph::visit::IntoEdgesDirected;
+use daggy::{
+    petgraph,
+    petgraph::dot::{Config, Dot},
+    petgraph::visit::IntoNeighborsDirected,
+    Dag, NodeIndex,
+};
 use hcl;
-use std::{collections::HashSet, error::Error, fs::File, hash::Hash, str::FromStr};
-fn main() -> Result<(), Box<dyn Error>> {
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    error::Error,
+    fmt,
+    fs::File,
+    hash::Hash,
+    str::FromStr,
+};
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+fn main() -> Result<()> {
     let f = File::open("./Lakefile")?;
-    let val: hcl::Value = hcl::from_reader(f)?;
-    println!("{:?}", val);
-    println!("{:?}", find_variables(val));
+    let body: hcl::Body = hcl::from_reader(f)?;
+    println!("{:?}", body);
+    parse_body(body)?;
+    // let obj = val.as_object().unwrap();
+    // for (k, v) in obj {
+    //     println!("{:?} => {:?}", k, v);
+    // }
     Ok(())
 }
 
-fn find_variables(val: hcl::Value) -> Vec<String> {
+fn parse_body(body: hcl::Body) -> Result<()> {
+    let mut dag = UniqueDag::new();
+    let mut name_set: HashSet<String> = HashSet::new();
+
+    for thing in body.into_inner() {
+        let (name, variables) = match thing {
+            hcl::Structure::Block(block) => {
+                if block.identifier.as_str() == "defaults" {
+                    continue;
+                }
+                let name = validate_block_type(&block)?;
+
+                let value: hcl::Value = block.into();
+                (name, find_variables(&value))
+            }
+            hcl::Structure::Attribute(attr) => {
+                let name: String = attr.key.as_str().into();
+                let value: hcl::Value = attr.into();
+                (name, find_variables(&value))
+            }
+        };
+        if name_set.contains(&name) {
+            return Err(validation_error(format!("Found duplicate name {name}")));
+        }
+        name_set.insert(name.clone());
+        dag.add(name, variables);
+    }
+    // let edge_graph = dag.dag.map(|_, _| (), |_, edge| edge.clone());
+    println!("{:?}", Dot::with_config(&dag.dag, &[Config::EdgeNoLabel]));
+    for index in 0..dag.dag.node_count() {
+        println!("{:?}", index);
+        for child in dag
+            .dag
+            .edges_directed(NodeIndex::new(index), petgraph::Direction::Outgoing)
+        {
+            println!("\tOUT{:?}", child);
+        }
+
+        for child in dag
+            .dag
+            .neighbors_directed(NodeIndex::new(index), petgraph::Direction::Incoming)
+        {
+            println!("\tIN{:?}", child);
+        }
+    }
+
+    dag.walk(|thing| println!("{thing}"));
+
+    Ok(())
+}
+
+struct UniqueDag {
+    dag: Dag<String, ()>,
+    node_indexes: HashMap<String, daggy::NodeIndex>,
+}
+
+impl UniqueDag {
+    fn new() -> Self {
+        Self {
+            dag: Dag::new(),
+            node_indexes: HashMap::new(),
+        }
+    }
+    fn add(&mut self, name: String, variables: Vec<String>) {
+        let name_idx = self.add_node(name);
+        for var in variables {
+            let var_idx = self.add_node(var);
+            self.dag.add_edge(var_idx, name_idx, ()).unwrap();
+        }
+    }
+
+    fn add_node(&mut self, val: String) -> NodeIndex {
+        if let Some(idx) = self.node_indexes.get(&val) {
+            *idx
+        } else {
+            let idx = self.dag.add_node(val.clone());
+            self.node_indexes.insert(val, idx);
+            idx
+        }
+    }
+    fn parents(&mut self, next: NodeIndex) -> petgraph::graph::Neighbors<()> {
+        self.dag
+            .neighbors_directed(next, petgraph::Direction::Incoming)
+    }
+    fn children(&mut self, next: NodeIndex) -> petgraph::graph::Neighbors<()> {
+        self.dag
+            .neighbors_directed(next, petgraph::Direction::Outgoing)
+    }
+
+    fn walk<F>(&mut self, f: F)
+    where
+        F: Fn(&String),
+    {
+        let mut completed: HashSet<NodeIndex> = HashSet::new();
+
+        let mut queue: VecDeque<NodeIndex> = (0..self.dag.node_count())
+            // Reverse for now to just confirm this all works, default
+            // insertion order will walk in the correct oder
+            .rev()
+            .map(|i| NodeIndex::new(i))
+            .collect();
+
+        while !queue.is_empty() {
+            // Get next node
+            let next = queue.pop_front().unwrap();
+
+            let all_parents_are_complete = self
+                .parents(next)
+                // Check if each parent is complete, if so we can proceed
+                .map(|parent| -> bool { completed.contains(&parent) })
+                .all(|b| b);
+
+            if !all_parents_are_complete {
+                continue;
+            }
+
+            // If all parents are complete, run the callback with the node value
+            let node_value = self.dag.node_weight(next).unwrap();
+            f(&node_value);
+
+            // Mark node as complete
+            completed.insert(next);
+
+            // Stick any children we might have skipped back on the queue, maybe
+            // they can be processed now
+            let mut children: VecDeque<NodeIndex> = self.children(next).collect();
+            queue.append(&mut children);
+        }
+    }
+}
+
+fn validate_block_type(block: &hcl::Block) -> Result<String> {
+    let identifier_str = block.identifier.as_str();
+    match identifier_str {
+        "command" | "file" | "store" => {}
+        _ => {
+            return Err(Box::new(InvalidBlockError {
+                name: block.identifier.to_owned(),
+            }))
+        }
+    };
+    if block.labels().len() != 1 {
+        return Err(validation_error(format!(
+            "block '{identifier_str}' has an incorrect number of labels"
+        )));
+    }
+    Ok(block.labels.first().unwrap().to_owned().into_inner())
+}
+
+fn block_to_recipe(block: &hcl::Block) -> Result<Recipe> {
+    let name = validate_block_type(block)?;
+
+    let mut recipe = Recipe {
+        env: HashMap::new(),
+        inputs: Vec::new(),
+        is_store: block.identifier.as_str() == "store",
+        name: name,
+        // Parse
+        network: false,
+        script: String::new(),
+        shell: Vec::new(),
+    };
+
+    // for attr in block.body.attributes() {
+    //     let attr_key_str = attr.key.as_str();
+    //     match attr_key_str {
+    //         "name" => {
+    //             recipe.name = ;
+    //         }
+    //         "i"
+    //         _ => {}
+    //     }
+    // }
+
+    Ok(recipe)
+}
+
+#[derive(Debug, Clone)]
+struct InvalidBlockError {
+    name: hcl::Identifier,
+}
+
+impl Error for InvalidBlockError {}
+
+impl fmt::Display for InvalidBlockError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "unexpected block '{}'", self.name)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ValidationError {
+    message: String,
+}
+
+impl Error for ValidationError {}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+fn validation_error(msg: String) -> Box<dyn Error> {
+    Box::new(ValidationError { message: msg })
+}
+
+struct Recipe {
+    env: HashMap<String, String>,
+    inputs: Vec<String>,
+    is_store: bool,
+    name: String,
+    network: bool,
+    script: String,
+    shell: Vec<String>,
+}
+
+fn find_variables(val: &hcl::Value) -> Vec<String> {
     let mut variables = Vec::new();
     match val {
         hcl::Value::Array(vals) => {
@@ -28,10 +267,10 @@ fn find_variables(val: hcl::Value) -> Vec<String> {
                 println!("{:?}", elem);
                 match elem {
                     hcl::template::Element::Interpolation(int) => {
-                        variables.append(&mut find_expression_variables(&int.expr));
+                        find_expression_variables(&mut variables, &int.expr);
                     }
                     hcl::template::Element::Directive(_) => panic!("unimplemented"),
-                    _ => {}
+                    hcl::template::Element::Literal(_) => {}
                 }
             }
         }
@@ -44,6 +283,7 @@ fn dedup_vec<T>(v: Vec<T>) -> Vec<T>
 where
     T: Eq + Hash,
 {
+    // TODO: better?
     let mut hash_set = HashSet::new();
     for elem in v {
         hash_set.insert(elem);
@@ -51,11 +291,12 @@ where
     hash_set.into_iter().collect()
 }
 
-fn find_expression_variables(expr: &hcl::Expression) -> Vec<String> {
-    let mut variables: Vec<String> = Vec::new();
+fn find_expression_variables(variables: &mut Vec<String>, expr: &hcl::Expression) {
     if let hcl::Expression::Variable(var) = expr {
         variables.push(var.as_str().into());
+        return;
     }
+
     let exprs = match expr {
         hcl::Expression::Traversal(t) => vec![&t.expr],
         hcl::Expression::ForExpr(for_exp) => vec![&for_exp.collection_expr],
@@ -67,9 +308,6 @@ fn find_expression_variables(expr: &hcl::Expression) -> Vec<String> {
         _ => vec![],
     };
     for exp in exprs {
-        variables.append(&mut find_expression_variables(&exp));
+        find_expression_variables(variables, &exp);
     }
-
-    println!("{:?} -> {:?}", expr, variables);
-    variables
 }
