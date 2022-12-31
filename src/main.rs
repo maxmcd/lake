@@ -309,14 +309,17 @@ mod tests {
             let result = parse_body(lakefile.into());
             if err_contains != "" && result.is_ok() {
                 panic!(
-                    "Test {name} was expected to return an error "
-                        + "containing {:?}, but no error was found",
+                    "Test {name} was expected to return an error containing {:?}, but no error was found",
                     err_contains
                 )
             } else if result.is_err() {
                 let err_msg = format!("{:?}", result.err().unwrap());
                 if !err_msg.contains(&err_contains) {
-                    panic!("\n\nTest {name} was expected to return an error containing:\n\t{:?}\nit instead returned the error:\n\t{:?}\n", err_contains, err_msg)
+                    panic!(
+                        "\n\nTest {name} was expected to return an error containing:\n\t{:?}\nit instead returned the error:\n\t{:?}\n",
+                        err_contains,
+                        err_msg,
+                    )
                 }
             }
         }
