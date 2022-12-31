@@ -291,15 +291,14 @@ mod tests {
         let body: hcl::Body = hcl::from_reader(f)?;
         for entity in body.into_inner() {
             let (name, err_contains, lakefile) = match entity {
-                hcl::Structure::Block(block) => {
-                    let name = block.labels.first().unwrap().clone().into_inner();
-                    let err_contains = get_err_contains(&block.body);
-                    let lakefile = get_lakefile(&block.body).expect("lakefile should exist");
-                    (name, err_contains, lakefile)
-                }
                 hcl::Structure::Attribute(attr) => {
                     panic!("Attributes are not allowed in test.hcl: {:?}", attr)
                 }
+                hcl::Structure::Block(block) => (
+                    block.labels.first().unwrap().clone().into_inner(),
+                    get_err_contains(&block.body),
+                    get_lakefile(&block.body).expect("lakefile should exist within test block"),
+                ),
             };
 
             println!("\nRunning test: {:#?}", name);
@@ -309,7 +308,11 @@ mod tests {
 
             let result = parse_body(lakefile.into());
             if err_contains != "" && result.is_ok() {
-                panic!("Test {name} was expected to return an error containing {:?}, but no error was found", err_contains)
+                panic!(
+                    "Test {name} was expected to return an error "
+                        + "containing {:?}, but no error was found",
+                    err_contains
+                )
             } else if result.is_err() {
                 let err_msg = format!("{:?}", result.err().unwrap());
                 if !err_msg.contains(&err_contains) {
