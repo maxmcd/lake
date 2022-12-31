@@ -1,5 +1,5 @@
 test "identifier store name conflict" {
-  err_contains = "Duplicate name"
+  err_contains = "duplicate name"
 
   file "Lakefile" {
     empty_store = "foo"
@@ -11,7 +11,7 @@ test "identifier store name conflict" {
 }
 
 test "store and target name conflict" {
-  err_contains = "Duplicate name"
+  err_contains = "duplicate name"
 
   file "Lakefile" {
     command "empty_store" {
@@ -27,7 +27,7 @@ test "store and target name conflict" {
 
 
 test "basic out of order references" {
-  err_contains = "unexpected block type"
+  err_contains = "InvalidBlockError"
   file "Lakefile" {
     unexpected "empty_store" {}
   }
@@ -88,7 +88,7 @@ test "basic functionality" {
 # }
 
 test "store comand circular reference" {
-  err_contains = "Circular reference"
+  err_contains = "WouldCycle"
   file "Lakefile" {
     command "a" {
       inputs = [c]
@@ -106,7 +106,7 @@ test "store comand circular reference" {
 }
 
 test "argument circular reference" {
-  err_contains = "Circular reference"
+  err_contains = "WouldCycle"
   file "Lakefile" {
     a = c
     b = a
@@ -115,7 +115,7 @@ test "argument circular reference" {
 }
 
 test "mixed argument store command circular reference" {
-  err_contains = "Circular reference"
+  err_contains = "WouldCycle"
   file "Lakefile" {
     a = c
     command "b" { inputs = [a] }

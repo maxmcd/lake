@@ -204,7 +204,7 @@ fn find_variables(val: &hcl::Value) -> Vec<String> {
             let tmpl = hcl::Template::from_str(&s).unwrap();
             let elems = tmpl.elements();
             for elem in elems {
-                println!("{:?}", elem);
+                // println!("{:?}", elem);
                 match elem {
                     hcl::template::Element::Interpolation(int) => {
                         find_expression_variables(&mut variables, &int.expr);
@@ -249,5 +249,69 @@ fn find_expression_variables(variables: &mut Vec<String>, expr: &hcl::Expression
     };
     for exp in exprs {
         find_expression_variables(variables, &exp);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{parse_body, Result};
+    use hcl;
+    use std::fs::File;
+
+    fn get_err_contains(block: &hcl::Body) -> String {
+        for attr in block.attributes() {
+            if attr.key.clone().into_inner() == "err_contains" {
+                if let hcl::Expression::String(str) = attr.expr.clone() {
+                    return str;
+                } else {
+                    panic!(
+                        "err_contains expression is not the correct type: {:?}",
+                        attr.expr
+                    )
+                }
+            } else {
+                panic!("Unexpected attribute found: {:#?}", attr);
+            }
+        }
+        String::new()
+    }
+    fn get_lakefile(block: &hcl::Body) -> Option<hcl::Body> {
+        for block in block.blocks() {
+            if block.identifier.clone().into_inner() == "file" {
+                return Some(block.body.clone());
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_hcl() -> Result<()> {
+        // Tests run from proj root
+        let f = File::open("./src/test.hcl")?;
+        let body: hcl::Body = hcl::from_reader(f)?;
+        for entity in body.into_inner() {
+            match entity {
+                hcl::Structure::Block(block) => {
+                    let name = block.labels.first().unwrap().clone().into_inner();
+                    println!("Running test: {:#?}", name);
+                    let err_contains = get_err_contains(&block.body);
+                    println!("Err contains: {:#?}", err_contains);
+                    let lakefile = get_lakefile(&block.body).expect("lakefile should exist");
+                    let result = parse_body(lakefile.into());
+                    if err_contains != "" && result.is_ok() {
+                        panic!("Test {name} was expected to return an error containing {:?}, but no error was found", err_contains)
+                    } else if result.is_err() {
+                        let err_msg = format!("{:?}", result.err().unwrap());
+                        if !err_msg.contains(&err_contains) {
+                            panic!("\n\nTest {name} was expected to return an error containing:\n\t{:?}\nit instead returned the error:\n\t{:?}\n", err_contains, err_msg)
+                        }
+                    }
+                }
+                hcl::Structure::Attribute(attr) => {
+                    panic!("Attributes are not allowed in test.hcl: {:?}", attr)
+                }
+            };
+        }
+        Ok(())
     }
 }
