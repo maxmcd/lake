@@ -49,7 +49,7 @@ test "basic functionality" {
       network = true
     }
 
-    target "busybox" {
+    command "busybox" {
       inputs = [busybox_store]
       shell  = ["${busybox_tar}/bin/busybox", "sh"]
       script = <<EOH

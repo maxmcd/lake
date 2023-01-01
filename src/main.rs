@@ -314,6 +314,8 @@ mod tests {
                     "Test {name} was expected to return an error containing {:?}, but no error was found",
                     err_contains
                 )
+            } else if err_contains == "" && result.is_err() {
+                result.expect(format!("test {name} errored unexpectedly").as_str());
             } else if result.is_err() {
                 let err_msg = format!("{:?}", result.err().unwrap());
                 if !err_msg.contains(&err_contains) {
