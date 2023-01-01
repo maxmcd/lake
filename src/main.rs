@@ -204,6 +204,8 @@ fn find_variables(val: &hcl::Value) -> Vec<String> {
             let tmpl = hcl::Template::from_str(&s).unwrap();
             let elems = tmpl.elements();
             for elem in elems {
+                // Uncomment to view pretty-print of expanded element. Will be
+                // helpful when implementing ::Directive
                 // println!("{:?}", elem);
                 match elem {
                     hcl::template::Element::Interpolation(int) => {
