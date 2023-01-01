@@ -1,4 +1,4 @@
-module github.com/maxmcd/lake
+module github.com/maxmcd/lake/go-implementation
 
 go 1.19
 

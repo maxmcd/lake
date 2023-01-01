@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/maxmcd/lake/lake"
+	"github.com/maxmcd/lake/go-implementation/lake"
 )
 
 func main() {
